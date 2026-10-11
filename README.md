@@ -40,3 +40,16 @@ A workflow compila o projeto nativo via Expo Prebuild e Gradle. O build precisa 
 - Não há integração bancária automática nem sincronização entre aparelhos.
 - Compras cadastradas no módulo Cartões são um controle auxiliar e ainda não entram automaticamente nos resultados de despesas; evite lançar a mesma compra também como despesa sem considerar a dupla contagem.
 - Não substitui contabilidade oficial, orientação tributária ou consultoria de investimentos.
+
+
+## Ajustes desta versão (1.1.0)
+
+- Área segura de Android aplicada com `react-native-safe-area-context` para respeitar a barra de status e a navegação do sistema.
+- Botão voltar do Android retorna à tela visitada anteriormente; sem histórico, permite a ação padrão do sistema. Ao digitar, o primeiro voltar fecha o teclado quando o evento chega à aplicação.
+- Datas exibidas e digitadas no padrão brasileiro `DD/MM/AAAA`, com máscara automática e teclado numérico; datas são convertidas para ISO somente ao salvar no banco local.
+- Formulários em modais usam `KeyboardAvoidingView` e listas roláveis para reduzir campos escondidos pelo teclado. A navegação inferior é temporariamente ocultada enquanto o teclado está aberto.
+- Perguntas rápidas do Evo Assistente “Para onde vai meu dinheiro?” e “Quais são minhas prioridades?” possuem regras locais de resposta e usam os dados cadastrados.
+- Tema escuro persistente, selecionável em Configurações.
+- Versão Android incrementada para permitir instalação como atualização quando a assinatura do APK for compatível.
+
+O projeto continua sem backend e sem chamadas de rede em tempo de execução. A compilação ainda baixa dependências no ambiente de build. Faça backup dos dados do aplicativo antes de instalar uma build nova.

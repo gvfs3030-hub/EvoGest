@@ -1,8 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  ActivityIndicator, Alert, KeyboardAvoidingView, Modal, Platform, Pressable,
-  SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, TextInput, View,
+  ActivityIndicator, Alert, BackHandler, Keyboard, KeyboardAvoidingView, Modal, Platform, Pressable,
+  ScrollView, StatusBar, StyleSheet, Text, TextInput, View,
 } from 'react-native';
+import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
@@ -52,16 +53,44 @@ function Card({ children, style }: { children: React.ReactNode; style?: any }) {
 function Label({ children }: { children: React.ReactNode }) {
   return <Text style={styles.label}>{children}</Text>;
 }
-function Field({ label, value, onChangeText, placeholder, keyboardType, multiline, autoCapitalize }: any) {
+function Field({ label, value, onChangeText, placeholder, keyboardType, multiline, autoCapitalize, maxLength, onFocus, returnKeyType }: any) {
   return <View style={styles.fieldWrap}><Label>{label}</Label><TextInput
     value={value} onChangeText={onChangeText} placeholder={placeholder ?? ''}
     placeholderTextColor="#A99EB5" keyboardType={keyboardType ?? 'default'}
-    multiline={multiline} autoCapitalize={autoCapitalize ?? 'sentences'}
+    multiline={multiline} maxLength={maxLength} onFocus={onFocus} returnKeyType={returnKeyType} autoCapitalize={autoCapitalize ?? 'sentences'}
     style={[styles.input, multiline && { minHeight: 82, textAlignVertical: 'top' }]}
   /></View>;
 }
+
+function isoDateToBrazil(value?: string | null): string {
+  if (!value) return '';
+  const match = String(value).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) return `${match[3]}/${match[2]}/${match[1]}`;
+  if (/^\d{2}\/\d{2}\/\d{4}$/.test(String(value))) return String(value);
+  return String(value);
+}
+
+function maskBrazilDate(value: string): string {
+  const digits = value.replace(/\D/g, '').slice(0, 8);
+  if (digits.length <= 2) return digits;
+  if (digits.length <= 4) return `${digits.slice(0, 2)}/${digits.slice(2)}`;
+  return `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4)}`;
+}
+
+function brazilDateToIso(value: string): string | null {
+  const match = value.trim().match(/^(\d{2})\/(\d{2})\/(\d{4})$/);
+  if (!match) return null;
+  const day = Number(match[1]); const month = Number(match[2]); const year = Number(match[3]);
+  const date = new Date(year, month - 1, day);
+  if (date.getFullYear() !== year || date.getMonth() !== month - 1 || date.getDate() !== day) return null;
+  return `${String(year).padStart(4, '0')}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function DateField({ label, value, onChangeText, placeholder = 'DD/MM/AAAA', optional = false }: any) {
+  return <Field label={label} value={value} onChangeText={(text: string) => onChangeText(maskBrazilDate(text))} placeholder={placeholder} keyboardType="number-pad" maxLength={10} autoCapitalize="none" />;
+}
 function PrimaryButton({ title, onPress, disabled, variant = 'primary' }: { title: string; onPress: () => void; disabled?: boolean; variant?: 'primary' | 'secondary' | 'danger' }) {
-  return <Pressable disabled={disabled} onPress={onPress} style={({ pressed }: { pressed: boolean }) => [styles.button, variant === 'secondary' && styles.buttonSecondary, variant === 'danger' && styles.buttonDanger, disabled && { opacity: 0.45 }, pressed && { opacity: 0.8 }]}><Text style={[styles.buttonText, variant === 'secondary' && { color: PURPLE }]}>{title}</Text></Pressable>;
+  return <Pressable disabled={disabled} onPress={onPress} style={({ pressed }: { pressed: boolean }) => [styles.button, variant === 'secondary' && styles.buttonSecondary, variant === 'danger' && styles.buttonDanger, disabled && { opacity: 0.45 }, pressed && { opacity: 0.8 }]}><Text style={[styles.buttonText, variant === 'secondary' && { color: appliedDarkMode ? '#D9C5FF' : PURPLE }]}>{title}</Text></Pressable>;
 }
 function Chip({ title, active, onPress }: { title: string; active?: boolean; onPress: () => void }) {
   return <Pressable onPress={onPress} style={[styles.chip, active && styles.chipActive]}><Text style={[styles.chipText, active && styles.chipTextActive]}>{title}</Text></Pressable>;
@@ -89,12 +118,15 @@ function MiniBars({ data, valueKey, color, formatter }: { data: any[]; valueKey:
   })}</View>;
 }
 
-export default function App() {
+function AppContent() {
   const [db, setDb] = useState<SQLite.SQLiteDatabase | null>(null);
   const [initializing, setInitializing] = useState(true);
   const [fatalError, setFatalError] = useState('');
   const [profile, setProfile] = useState<Profile | null>(null);
   const [screen, setScreen] = useState<Screen>('home');
+  const [navigationHistory, setNavigationHistory] = useState<Screen[]>([]);
+  const [keyboardVisible, setKeyboardVisible] = useState(false);
+  const [darkMode, setDarkMode] = useState(false);
   const [modal, setModal] = useState<ModalKind>(null);
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
   const [selectedCard, setSelectedCard] = useState<number | null>(null);
@@ -132,6 +164,7 @@ export default function App() {
     ]);
     setProfile(p); setSummary(s); setAccounts(a); setCategories(c); setTransactions(t); setMonthly(m); setExpenseBreakdown(b); setGoals(g); setProgress(pr); setCards(cardsResult); setAssistantHistory(hist); setSettings(settingResult);
     setShowValues(settingResult.privacy_hide_values !== 'true');
+    setDarkMode(settingResult.theme_dark === 'true');
   }, []);
 
   useEffect(() => {
@@ -151,6 +184,35 @@ export default function App() {
     })();
     return () => { active = false; };
   }, [refresh]);
+
+  const navigateTo = (next: Screen) => {
+    if (screen === next) return;
+    setNavigationHistory((previous) => [...previous, screen]);
+    setScreen(next);
+  };
+
+  useEffect(() => {
+    const showSubscription = Keyboard.addListener('keyboardDidShow', () => setKeyboardVisible(true));
+    const hideSubscription = Keyboard.addListener('keyboardDidHide', () => setKeyboardVisible(false));
+    return () => { showSubscription.remove(); hideSubscription.remove(); };
+  }, []);
+
+  useEffect(() => {
+    const subscription = BackHandler.addEventListener('hardwareBackPress', () => {
+      if (keyboardVisible) { Keyboard.dismiss(); setKeyboardVisible(false); return true; }
+      if (selectedLesson) { setSelectedLesson(null); return true; }
+      if (modal) { setModal(null); setEditingTransaction(null); setGoalModalInitial(null); return true; }
+      if (navigationHistory.length > 0) {
+        const previous = navigationHistory[navigationHistory.length - 1];
+        setNavigationHistory((items) => items.slice(0, -1));
+        setScreen(previous);
+        return true;
+      }
+      // Sem tela anterior: devolve o evento ao Android para sair/minimizar normalmente.
+      return false;
+    });
+    return () => subscription.remove();
+  }, [modal, selectedLesson, navigationHistory, keyboardVisible]);
 
   useEffect(() => {
     if (profile && accounts.length === 0 && screen !== 'settings') setScreen('accounts');
@@ -198,7 +260,7 @@ export default function App() {
     try {
       await saveProfile(db, { name: profileName.trim(), audience: onboardingAudience, challenges: onboardingChallenges, primary_goal: onboardingGoal });
       if (firstAccount.trim()) await addAccount(db, firstAccount.trim(), onboardingAudience === 'business' ? 'Caixa do negócio' : 'Conta principal', centsFromInput(firstBalance));
-      await refresh(db); setScreen('home');
+      await refresh(db); setNavigationHistory([]); setScreen('home');
     } catch (error: any) { Alert.alert('Não foi possível configurar', error?.message ?? 'Tente novamente.'); }
     finally { setLoadingAction(false); }
   };
@@ -280,7 +342,7 @@ export default function App() {
       const rows = await getTransactions(db, 5000);
       const escape = (v: string) => `"${String(v ?? '').replace(/"/g, '""')}"`;
       const lines = [['Data','Tipo','Descrição','Categoria','Conta','Status','Valor_centavos'].join(';')];
-      for (const t of rows) lines.push([t.transaction_date, typeLabel(t.type), escape(t.description), escape(t.category_name ?? ''), escape(t.account_name ?? ''), statusLabel(t.status), String(t.amount_cents)].join(';'));
+      for (const t of rows) lines.push([ptLongDate(t.transaction_date), typeLabel(t.type), escape(t.description), escape(t.category_name ?? ''), escape(t.account_name ?? ''), statusLabel(t.status), String(t.amount_cents)].join(';'));
       const uri = `${FileSystem.documentDirectory}evogest-movimentacoes-${localDate()}.csv`;
       await FileSystem.writeAsStringAsync(uri, '\uFEFF' + lines.join('\n'), { encoding: FileSystem.EncodingType.UTF8 });
       if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'text/csv', dialogTitle: 'Exportar movimentações' });
@@ -296,6 +358,14 @@ export default function App() {
     setSettings((prev) => ({ ...prev, privacy_hide_values: next }));
   };
 
+  const toggleTheme = async () => {
+    if (!db) return;
+    const next = darkMode ? 'false' : 'true';
+    await setSetting(db, 'theme_dark', next);
+    setDarkMode(next === 'true');
+    setSettings((previous) => ({ ...previous, theme_dark: next }));
+  };
+
   const clearData = () => {
     if (!db) return;
     Alert.alert('Apagar todos os dados?', 'Essa ação é irreversível. Exporte um backup antes. O aplicativo voltará ao onboarding inicial.', [
@@ -303,13 +373,15 @@ export default function App() {
       { text: 'Apagar dados', style: 'destructive', onPress: async () => {
         try {
           await db.execAsync('DELETE FROM card_purchases; DELETE FROM cards; DELETE FROM transactions; DELETE FROM goals; DELETE FROM lesson_progress; DELETE FROM assistant_history; DELETE FROM accounts; DELETE FROM profile;');
-          await refresh(db); setScreen('home');
+          await refresh(db); setNavigationHistory([]); setScreen('home');
         } catch { Alert.alert('Erro', 'Não foi possível apagar os dados.'); }
       } },
     ]);
   };
 
-  if (initializing) return <SafeAreaView style={styles.center}><StatusBar barStyle="dark-content" backgroundColor={BG} /><ActivityIndicator size="large" color={VIOLET} /><Text style={styles.loadingText}>Preparando seu espaço financeiro...</Text></SafeAreaView>;
+  applyGlobalTheme(darkMode);
+
+  if (initializing) return <SafeAreaView style={styles.center}><StatusBar barStyle={darkMode ? 'light-content' : 'dark-content'} backgroundColor={darkMode ? '#15111C' : BG} /><ActivityIndicator size="large" color={VIOLET} /><Text style={styles.loadingText}>Preparando seu espaço financeiro...</Text></SafeAreaView>;
   if (fatalError) return <SafeAreaView style={styles.center}><StatusBar barStyle="dark-content" backgroundColor={BG} /><Text style={styles.brandMark}>E</Text><Text style={styles.screenTitle}>Não foi possível abrir o EvoGest</Text><Text style={styles.bodyText}>{fatalError}</Text><Text style={styles.bodyText}>Se esta instalação foi feita a partir de uma versão anterior, não desinstale o aplicativo antes de verificar se há um backup válido.</Text></SafeAreaView>;
   if (!db) return null;
   if (!profile) return <Onboarding
@@ -321,26 +393,26 @@ export default function App() {
 
   const title = ({ home: 'Visão geral', transactions: 'Movimentações', cashflow: 'Fluxo de caixa', assistant: 'Evo Assistente', evolui: 'EvoGest Evolui', accounts: 'Minhas contas', goals: 'Metas financeiras', reports: 'Relatórios', cards: 'Cartões', settings: 'Configurações' } as Record<Screen, string>)[screen];
 
-  return <SafeAreaView style={styles.safe}>
-    <StatusBar barStyle="dark-content" backgroundColor={BG} />
+  return <SafeAreaView edges={['top', 'bottom']} style={styles.safe}>
+    <StatusBar barStyle={darkMode ? 'light-content' : 'dark-content'} backgroundColor={darkMode ? '#15111C' : BG} />
     <View style={styles.appHeader}>
       <View style={styles.brandRow}><View style={styles.brandIcon}><Text style={styles.brandIconText}>E↗</Text></View><View><Text style={styles.brandTitle}>EvoGest</Text><Text style={styles.brandSubtitle}>Sua gestão evolui.</Text></View></View>
-      <View style={styles.headerButtons}><Pressable onPress={toggleHideValues} style={styles.iconButton}><Text style={styles.iconButtonText}>{showValues ? '◉' : '◎'}</Text></Pressable><Pressable onPress={() => setScreen('settings')} style={styles.iconButton}><Text style={styles.iconButtonText}>☰</Text></Pressable></View>
+      <View style={styles.headerButtons}><Pressable onPress={toggleHideValues} style={styles.iconButton}><Text style={styles.iconButtonText}>{showValues ? '◉' : '◎'}</Text></Pressable><Pressable onPress={() => navigateTo('settings')} style={styles.iconButton}><Text style={styles.iconButtonText}>☰</Text></Pressable></View>
     </View>
     <View style={styles.screenHead}><Text style={styles.screenTitle}>{title}</Text>{screen === 'transactions' || screen === 'home' ? <Pressable style={styles.addButton} onPress={() => showTransactionForm()}><Text style={styles.addButtonText}>＋</Text></Pressable> : null}</View>
-    <ScrollView style={styles.page} contentContainerStyle={styles.pageContent} keyboardShouldPersistTaps="handled">
-      {screen === 'home' && <HomeScreen summary={summary} accounts={accounts} transactions={transactions} monthly={monthly} breakdown={expenseBreakdown} goals={goals} fmt={fmt} onNavigate={setScreen} onAdd={() => showTransactionForm()} onSelectTx={showTransactionForm} />}
+    <ScrollView style={styles.page} contentContainerStyle={styles.pageContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag">
+      {screen === 'home' && <HomeScreen summary={summary} accounts={accounts} transactions={transactions} monthly={monthly} breakdown={expenseBreakdown} goals={goals} fmt={fmt} onNavigate={navigateTo} onAdd={() => showTransactionForm()} onSelectTx={showTransactionForm} />}
       {screen === 'transactions' && <TransactionsScreen transactions={transactions.filter((t) => movementFilter === 'all' || t.type === movementFilter)} filter={movementFilter} setFilter={setMovementFilter} fmt={fmt} onAdd={() => showTransactionForm()} onEdit={showTransactionForm} onDelete={deleteTx} />}
       {screen === 'cashflow' && <CashflowScreen summary={summary} monthly={monthly} upcoming={awaitlessUpcoming(transactions)} fmt={fmt} />}
       {screen === 'assistant' && <AssistantScreen history={assistantHistory} question={assistantQuestion} setQuestion={setAssistantQuestion} onSend={() => sendAssistantQuestion()} onQuickAsk={sendAssistantQuestion} fmt={fmt} onClear={() => Alert.alert('Limpar conversa?', 'O histórico local do assistente será apagado.', [{ text: 'Cancelar', style: 'cancel' }, { text: 'Limpar', style: 'destructive', onPress: async () => { await clearAssistantHistory(db); await refresh(db); } }])} />}
       {screen === 'evolui' && <EvoluiScreen progress={progress} filter={educationFilter} setFilter={setEducationFilter} onOpen={setSelectedLesson} fmt={fmt} />}
-      {screen === 'accounts' && <AccountsScreen accounts={accounts} fmt={fmt} onAdd={() => setModal('account')} onReports={() => setScreen('reports')} />}
+      {screen === 'accounts' && <AccountsScreen accounts={accounts} fmt={fmt} onAdd={() => setModal('account')} onReports={() => navigateTo('reports')} />}
       {screen === 'goals' && <GoalsScreen goals={goals} fmt={fmt} onAdd={() => setModal('goal')} onEdit={(goal: Goal) => { setGoalModalInitial(goal); setModal('goal'); }} />}
       {screen === 'reports' && <ReportsScreen summary={summary} monthly={monthly} breakdown={expenseBreakdown} fmt={fmt} onExportCsv={exportCsv} onBackup={exportData} />}
       {screen === 'cards' && <CardsScreen cards={cards} purchases={cardPurchases} selectedCard={selectedCard} onChoose={async (id: number) => { setSelectedCard(id); await refreshCardPurchases(id); }} onAddCard={() => setModal('card')} onAddPurchase={() => { if (!selectedCard) { Alert.alert('Selecione um cartão', 'Escolha um cartão para registrar uma compra.'); return; } setModal('purchase'); }} fmt={fmt} />}
-      {screen === 'settings' && <SettingsScreen showValues={showValues} onToggleValues={toggleHideValues} onExport={exportData} onImport={importData} onExportCsv={exportCsv} onClearHistory={async () => { await clearAssistantHistory(db); await refresh(db); }} onClearAll={clearData} onAddCategory={() => setModal('category')} />}
+      {screen === 'settings' && <SettingsScreen showValues={showValues} onToggleValues={toggleHideValues} darkMode={darkMode} onToggleTheme={toggleTheme} onExport={exportData} onImport={importData} onExportCsv={exportCsv} onClearHistory={async () => { await clearAssistantHistory(db); await refresh(db); }} onClearAll={clearData} onAddCategory={() => setModal('category')} />}
     </ScrollView>
-    <BottomNav screen={screen} onChange={setScreen} />
+    {!keyboardVisible && <BottomNav screen={screen} onChange={navigateTo} />}
 
     <TransactionModal visible={modal === 'transaction'} initial={editingTransaction} accounts={accounts} categories={categories} saving={loadingAction} onClose={() => { setModal(null); setEditingTransaction(null); }} onSave={submitTransaction} />
     <AccountModal visible={modal === 'account'} onClose={() => setModal(null)} onSave={submitAccount} />
@@ -461,8 +533,8 @@ function CardsScreen({ cards, purchases, selectedCard, onChoose, onAddCard, onAd
     {selected && <Card><SectionHeading title={`Compras · ${selected.name}`} right="＋ Registrar" onRight={onAddPurchase} />{purchases.length === 0 ? <Text style={styles.muted}>Nenhuma compra registrada neste cartão.</Text> : purchases.map((p: any) => <View key={p.id} style={styles.txRow}><View style={styles.txIcon}><Text style={styles.txIconText}>▣</Text></View><View style={styles.txMiddle}><Text style={styles.txTitle}>{p.description}</Text><Text style={styles.txSubtitle}>{ptLongDate(p.purchase_date)} · {p.installments} parcela(s)</Text></View><Text style={styles.txAmount}>{fmt(p.amount_cents)}</Text></View>)}</Card>}
     <Card><Text style={styles.cardTitle}>Importante</Text><Text style={styles.bodyText}>As compras registradas aqui são um controle auxiliar. Elas não são inseridas automaticamente como despesas pagas no fluxo de caixa. Use o pagamento da fatura como uma movimentação coerente e evite lançar a mesma despesa duas vezes nos seus relatórios.</Text></Card></View>;
 }
-function SettingsScreen({ showValues, onToggleValues, onExport, onImport, onExportCsv, onClearHistory, onClearAll, onAddCategory }: any) {
-  return <View><Card><SectionHeading title="Privacidade e visualização" /><View style={styles.rowBetween}><View style={{ flex: 1 }}><Text style={styles.categoryName}>Ocultar valores financeiros</Text><Text style={styles.muted}>Esconde valores nos principais cartões e listas.</Text></View><Pressable onPress={onToggleValues} style={[styles.toggle, !showValues && styles.toggleOn]}><View style={[styles.toggleKnob, !showValues && styles.toggleKnobOn]} /></Pressable></View><View style={styles.settingsDivider} /><Text style={styles.cardTitle}>Seus dados, seu dispositivo</Text><Text style={styles.bodyText}>O EvoGest utiliza banco de dados local criptografado com SQLCipher e uma chave protegida pelo armazenamento seguro do Android nesta configuração de build. A perda do arquivo de chave ou do aparelho pode impedir a recuperação sem backup válido.</Text></Card>
+function SettingsScreen({ showValues, onToggleValues, darkMode, onToggleTheme, onExport, onImport, onExportCsv, onClearHistory, onClearAll, onAddCategory }: any) {
+  return <View><Card><SectionHeading title="Privacidade e visualização" /><View style={styles.rowBetween}><View style={{ flex: 1 }}><Text style={styles.categoryName}>Ocultar valores financeiros</Text><Text style={styles.muted}>Esconde valores nos principais cartões e listas.</Text></View><Pressable accessibilityRole="switch" accessibilityState={{ checked: !showValues }} onPress={onToggleValues} style={[styles.toggle, !showValues && styles.toggleOn]}><View style={[styles.toggleKnob, !showValues && styles.toggleKnobOn]} /></Pressable></View><View style={styles.settingsDivider} /><View style={styles.rowBetween}><View style={{ flex: 1 }}><Text style={styles.categoryName}>Tema escuro</Text><Text style={styles.muted}>Use uma interface escura para ambientes com pouca luz.</Text></View><Pressable accessibilityRole="switch" accessibilityState={{ checked: darkMode }} onPress={onToggleTheme} style={[styles.toggle, darkMode && styles.toggleOn]}><View style={[styles.toggleKnob, darkMode && styles.toggleKnobOn]} /></Pressable></View><View style={styles.settingsDivider} /><Text style={styles.cardTitle}>Seus dados, seu dispositivo</Text><Text style={styles.bodyText}>O EvoGest utiliza banco de dados local criptografado com SQLCipher e uma chave protegida pelo armazenamento seguro do Android nesta configuração de build. A perda do arquivo de chave ou do aparelho pode impedir a recuperação sem backup válido.</Text></Card>
     <Card><SectionHeading title="Categorias" /><Text style={styles.bodyText}>Personalize as categorias para que os relatórios reflitam sua realidade.</Text><PrimaryButton title="＋ Criar categoria personalizada" onPress={onAddCategory} /></Card>
     <Card><SectionHeading title="Backup e portabilidade" /><PrimaryButton title="Criar backup completo" onPress={onExport} /><View style={{ height: 8 }} /><PrimaryButton title="Restaurar backup de arquivo" variant="secondary" onPress={onImport} /><View style={{ height: 8 }} /><PrimaryButton title="Exportar movimentações CSV" variant="secondary" onPress={onExportCsv} /><Text style={[styles.muted, { marginTop: 10 }]}>O compartilhamento de arquivos é iniciado somente após sua ação. Se você escolher outro aplicativo para receber o arquivo, esses dados poderão sair do EvoGest.</Text></Card>
     <Card><SectionHeading title="Assistente e dados" /><PrimaryButton title="Apagar histórico do assistente" variant="secondary" onPress={onClearHistory} /><View style={{ height: 8 }} /><PrimaryButton title="Apagar todos os dados locais" variant="danger" onPress={onClearAll} /></Card>
@@ -476,7 +548,7 @@ function TransactionModal({ visible, initial, accounts, categories, saving, onCl
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [accountId, setAccountId] = useState<number | null>(null);
   const [toAccountId, setToAccountId] = useState<number | null>(null);
-  const [date, setDate] = useState(todayIso);
+  const [date, setDate] = useState(isoDateToBrazil(todayIso));
   const [dueDate, setDueDate] = useState('');
   const [status, setStatus] = useState<TransactionStatus>('done');
   const [notes, setNotes] = useState('');
@@ -485,7 +557,7 @@ function TransactionModal({ visible, initial, accounts, categories, saving, onCl
     if (!visible) return;
     setType(initial?.type ?? 'expense'); setDescription(initial?.description ?? ''); setAmount(initial ? inputFromCents(initial.amount_cents) : '');
     setCategoryId(initial?.category_id ?? null); setAccountId(initial?.account_id ?? accounts[0]?.id ?? null); setToAccountId(initial?.to_account_id ?? accounts.find((a: Account) => a.id !== accounts[0]?.id)?.id ?? null);
-    setDate(initial?.transaction_date ?? todayIso); setDueDate(initial?.due_date ?? ''); setStatus(initial?.status ?? 'done'); setNotes(initial?.notes ?? ''); setRecurrence(initial?.recurrence_frequency ?? 'none');
+    setDate(isoDateToBrazil(initial?.transaction_date ?? todayIso)); setDueDate(isoDateToBrazil(initial?.due_date ?? '')); setStatus(initial?.status ?? 'done'); setNotes(initial?.notes ?? ''); setRecurrence(initial?.recurrence_frequency ?? 'none');
   }, [visible, initial, accounts]);
   const catList = categories.filter((c: Category) => c.kind === (type === 'income' ? 'income' : 'expense'));
   const save = () => {
@@ -493,19 +565,22 @@ function TransactionModal({ visible, initial, accounts, categories, saving, onCl
     const cents = centsFromInput(amount);
     if (cents <= 0) { Alert.alert('Valor inválido', 'Informe um valor maior que zero.'); return; }
     if (!accountId) { Alert.alert('Conta necessária', 'Cadastre uma conta antes de registrar movimentações.'); return; }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { Alert.alert('Data inválida', 'Use AAAA-MM-DD, por exemplo 2026-10-10.'); return; }
+    const isoDate = brazilDateToIso(date);
+    if (!isoDate) { Alert.alert('Data inválida', 'Informe uma data real no formato DD/MM/AAAA, por exemplo 11/10/2026.'); return; }
+    const isoDueDate = dueDate.trim() ? brazilDateToIso(dueDate) : null;
+    if (dueDate.trim() && !isoDueDate) { Alert.alert('Vencimento inválido', 'Informe uma data real no formato DD/MM/AAAA.'); return; }
     if (type !== 'transfer' && !categoryId) { Alert.alert('Categoria necessária', 'Escolha uma categoria.'); return; }
-    onSave({ type, amount_cents: cents, description, category_id: type === 'transfer' ? null : categoryId, account_id: accountId, to_account_id: type === 'transfer' ? toAccountId : null, transaction_date: date, due_date: dueDate || null, status, notes, recurrence_frequency: type === 'transfer' ? 'none' : recurrence, recurrence_group: initial?.recurrence_group ?? null });
+    onSave({ type, amount_cents: cents, description, category_id: type === 'transfer' ? null : categoryId, account_id: accountId, to_account_id: type === 'transfer' ? toAccountId : null, transaction_date: isoDate, due_date: isoDueDate, status, notes, recurrence_frequency: type === 'transfer' ? 'none' : recurrence, recurrence_group: initial?.recurrence_group ?? null });
   };
-  return <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen"><SafeAreaView style={styles.modalSafe}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : undefined} style={{ flex: 1 }}><View style={styles.modalHeader}><Text style={styles.modalTitle}>{initial ? 'Editar movimentação' : 'Nova movimentação'}</Text><Pressable onPress={onClose}><Text style={styles.modalClose}>✕</Text></Pressable></View><ScrollView contentContainerStyle={styles.modalContent} keyboardShouldPersistTaps="handled">
+  return <Modal visible={visible} animationType="slide" onRequestClose={onClose} presentationStyle="fullScreen"><SafeAreaView style={styles.modalSafe}><KeyboardAvoidingView behavior={Platform.OS === 'ios' ? 'padding' : 'height'} style={{ flex: 1 }}><View style={styles.modalHeader}><Text style={styles.modalTitle}>{initial ? 'Editar movimentação' : 'Nova movimentação'}</Text><Pressable onPress={onClose}><Text style={styles.modalClose}>✕</Text></Pressable></View><ScrollView contentContainerStyle={styles.modalContent} keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" style={{ flexShrink: 1 }}>
     <View style={styles.chipWrap}>{[['income','Entrada'],['expense','Saída'],['transfer','Transferência']].map(([key, label]) => <Chip key={key} title={label} active={type === key} onPress={() => setType(key as TransactionType)} />)}</View>
     <Field label="Descrição" value={description} onChangeText={setDescription} placeholder={type === 'income' ? 'Ex.: salário' : type === 'transfer' ? 'Ex.: transferência entre contas' : 'Ex.: mercado'} />
     <Field label="Valor (R$)" value={amount} onChangeText={setAmount} placeholder="0,00" keyboardType="decimal-pad" />
     <Label>{type === 'transfer' ? 'Conta de origem' : 'Conta'}</Label><View style={styles.chipWrap}>{accounts.map((a: Account) => <Chip key={a.id} title={a.name} active={accountId === a.id} onPress={() => setAccountId(a.id)} />)}</View>
     {type === 'transfer' && <><Label>Conta de destino</Label><View style={styles.chipWrap}>{accounts.filter((a: Account) => a.id !== accountId).map((a: Account) => <Chip key={a.id} title={a.name} active={toAccountId === a.id} onPress={() => setToAccountId(a.id)} />)}</View></>}
     {type !== 'transfer' && <><Label>Categoria</Label><View style={styles.chipWrap}>{catList.map((c: Category) => <Chip key={c.id} title={`${c.icon} ${c.name}`} active={categoryId === c.id} onPress={() => setCategoryId(c.id)} />)}</View></>}
-    <Field label="Data (AAAA-MM-DD)" value={date} onChangeText={setDate} placeholder={todayIso} />
-    <Field label="Vencimento (opcional, AAAA-MM-DD)" value={dueDate} onChangeText={setDueDate} placeholder="AAAA-MM-DD" />
+    <DateField label="Data (DD/MM/AAAA)" value={date} onChangeText={setDate} placeholder="DD/MM/AAAA" />
+    <DateField label="Vencimento (opcional, DD/MM/AAAA)" value={dueDate} onChangeText={setDueDate} placeholder="DD/MM/AAAA" />
     <Label>Status da movimentação</Label><View style={styles.chipWrap}><Chip title="Realizada" active={status === 'done'} onPress={() => setStatus('done')} /><Chip title="Prevista" active={status === 'planned'} onPress={() => setStatus('planned')} /><Chip title="Cancelada" active={status === 'cancelled'} onPress={() => setStatus('cancelled')} /></View>
     {!initial && type !== 'transfer' ? <><Label>Repetição automática</Label><View style={styles.chipWrap}><Chip title="Não repetir" active={recurrence === 'none'} onPress={() => setRecurrence('none')} /><Chip title="Semanal" active={recurrence === 'weekly'} onPress={() => setRecurrence('weekly')} /><Chip title="Mensal" active={recurrence === 'monthly'} onPress={() => setRecurrence('monthly')} /><Chip title="Anual" active={recurrence === 'yearly'} onPress={() => setRecurrence('yearly')} /></View>{recurrence !== 'none' ? <Text style={styles.muted}>Serão criadas até 12 ocorrências futuras previstas (3 para frequência anual). A edição da ocorrência principal atualiza os compromissos futuros da série.</Text> : null}</> : initial?.recurrence_group ? <Text style={styles.muted}>Esta movimentação pertence a uma série recorrente. A edição de uma ocorrência não altera as demais, exceto quando você edita a movimentação principal da série.</Text> : null}
     <Field label="Observações (opcional)" value={notes} onChangeText={setNotes} placeholder="Detalhes adicionais" multiline />
@@ -515,22 +590,22 @@ function TransactionModal({ visible, initial, accounts, categories, saving, onCl
 function AccountModal({ visible, onClose, onSave }: any) {
   const [name, setName] = useState(''); const [type, setType] = useState('Conta digital'); const [balance, setBalance] = useState('0,00');
   useEffect(() => { if (visible) { setName(''); setType('Conta digital'); setBalance('0,00'); } }, [visible]);
-  return <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}><View style={styles.modalShade}><View style={styles.smallModal}><View style={styles.modalHeader}><Text style={styles.modalTitle}>Adicionar conta</Text><Pressable onPress={onClose}><Text style={styles.modalClose}>✕</Text></Pressable></View><ScrollView keyboardShouldPersistTaps="handled"><Field label="Nome da conta" value={name} onChangeText={setName} placeholder="Ex.: Banco principal" /><Label>Tipo</Label><View style={styles.chipWrap}>{['Conta bancária','Conta digital','Dinheiro','Caixa do negócio','Poupança','Outra'].map((x) => <Chip key={x} title={x} active={type === x} onPress={() => setType(x)} />)}</View><Field label="Saldo inicial (R$)" value={balance} onChangeText={setBalance} placeholder="0,00" keyboardType="decimal-pad" /><PrimaryButton title="Salvar conta" onPress={() => { if (!name.trim()) { Alert.alert('Nome obrigatório', 'Informe o nome da conta.'); return; } onSave({ name, type, balance }); }} /></ScrollView></View></View></Modal>;
+  return <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}><View style={styles.modalShade}><KeyboardAvoidingView style={styles.modalAvoider} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}><View style={styles.smallModal}><View style={styles.modalHeader}><Text style={styles.modalTitle}>Adicionar conta</Text><Pressable onPress={onClose}><Text style={styles.modalClose}>✕</Text></Pressable></View><ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" style={{ flexShrink: 1 }}><Field label="Nome da conta" value={name} onChangeText={setName} placeholder="Ex.: Banco principal" /><Label>Tipo</Label><View style={styles.chipWrap}>{['Conta bancária','Conta digital','Dinheiro','Caixa do negócio','Poupança','Outra'].map((x) => <Chip key={x} title={x} active={type === x} onPress={() => setType(x)} />)}</View><Field label="Saldo inicial (R$)" value={balance} onChangeText={setBalance} placeholder="0,00" keyboardType="decimal-pad" /><PrimaryButton title="Salvar conta" onPress={() => { if (!name.trim()) { Alert.alert('Nome obrigatório', 'Informe o nome da conta.'); return; } onSave({ name, type, balance }); }} /></ScrollView></View></KeyboardAvoidingView></View></Modal>;
 }
 function GoalModal({ visible, initial, audience, onClose, onSave }: any) {
   const [name, setName] = useState(''); const [target, setTarget] = useState(''); const [saved, setSaved] = useState('0,00'); const [date, setDate] = useState(''); const [kind, setKind] = useState<'personal' | 'business'>('personal');
-  useEffect(() => { if (visible) { setName(initial?.name ?? ''); setTarget(initial ? inputFromCents(initial.target_cents) : ''); setSaved(initial ? inputFromCents(initial.saved_cents) : '0,00'); setDate(initial?.target_date ?? ''); setKind(initial?.kind ?? (audience === 'business' ? 'business' : 'personal')); } }, [visible, initial, audience]);
-  return <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}><View style={styles.modalShade}><View style={styles.smallModal}><View style={styles.modalHeader}><Text style={styles.modalTitle}>{initial ? 'Atualizar progresso' : 'Nova meta'}</Text><Pressable onPress={onClose}><Text style={styles.modalClose}>✕</Text></Pressable></View><ScrollView keyboardShouldPersistTaps="handled"><Field label="Nome da meta" value={name} onChangeText={setName} placeholder="Ex.: Reserva financeira" /><Field label="Valor da meta (R$)" value={target} onChangeText={setTarget} placeholder="1000,00" keyboardType="decimal-pad" /><Field label="Valor acumulado (R$)" value={saved} onChangeText={setSaved} placeholder="0,00" keyboardType="decimal-pad" /><Field label="Prazo (opcional, AAAA-MM-DD)" value={date} onChangeText={setDate} placeholder="2027-06-30" /><View style={styles.chipWrap}><Chip title="Pessoal" active={kind === 'personal'} onPress={() => setKind('personal')} /><Chip title="Negócio" active={kind === 'business'} onPress={() => setKind('business')} /></View><PrimaryButton title={initial ? 'Atualizar meta' : 'Criar meta'} onPress={() => onSave({ name, target, saved, date, kind, id: initial?.id })} /></ScrollView></View></View></Modal>;
+  useEffect(() => { if (visible) { setName(initial?.name ?? ''); setTarget(initial ? inputFromCents(initial.target_cents) : ''); setSaved(initial ? inputFromCents(initial.saved_cents) : '0,00'); setDate(isoDateToBrazil(initial?.target_date ?? '')); setKind(initial?.kind ?? (audience === 'business' ? 'business' : 'personal')); } }, [visible, initial, audience]);
+  return <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}><View style={styles.modalShade}><KeyboardAvoidingView style={styles.modalAvoider} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}><View style={styles.smallModal}><View style={styles.modalHeader}><Text style={styles.modalTitle}>{initial ? 'Atualizar progresso' : 'Nova meta'}</Text><Pressable onPress={onClose}><Text style={styles.modalClose}>✕</Text></Pressable></View><ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" style={{ flexShrink: 1 }}><Field label="Nome da meta" value={name} onChangeText={setName} placeholder="Ex.: Reserva financeira" /><Field label="Valor da meta (R$)" value={target} onChangeText={setTarget} placeholder="1000,00" keyboardType="decimal-pad" /><Field label="Valor acumulado (R$)" value={saved} onChangeText={setSaved} placeholder="0,00" keyboardType="decimal-pad" /><DateField label="Prazo (opcional, DD/MM/AAAA)" value={date} onChangeText={setDate} placeholder="DD/MM/AAAA" /><View style={styles.chipWrap}><Chip title="Pessoal" active={kind === 'personal'} onPress={() => setKind('personal')} /><Chip title="Negócio" active={kind === 'business'} onPress={() => setKind('business')} /></View><PrimaryButton title={initial ? 'Atualizar meta' : 'Criar meta'} onPress={() => { const isoDate = date.trim() ? brazilDateToIso(date) : ''; if (date.trim() && !isoDate) { Alert.alert('Prazo inválido', 'Informe uma data real no formato DD/MM/AAAA.'); return; } onSave({ name, target, saved, date: isoDate, kind, id: initial?.id }); }} /></ScrollView></View></KeyboardAvoidingView></View></Modal>;
 }
 function CardModal({ visible, onClose, onSave }: any) {
   const [name, setName] = useState(''); const [limit, setLimit] = useState(''); const [close, setClose] = useState('1'); const [due, setDue] = useState('10');
   useEffect(() => { if (visible) { setName(''); setLimit(''); setClose('1'); setDue('10'); } }, [visible]);
-  return <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}><View style={styles.modalShade}><View style={styles.smallModal}><View style={styles.modalHeader}><Text style={styles.modalTitle}>Novo cartão</Text><Pressable onPress={onClose}><Text style={styles.modalClose}>✕</Text></Pressable></View><ScrollView keyboardShouldPersistTaps="handled"><Field label="Nome" value={name} onChangeText={setName} placeholder="Cartão principal" /><Field label="Limite total (R$)" value={limit} onChangeText={setLimit} placeholder="3000,00" keyboardType="decimal-pad" /><Field label="Dia de fechamento (1–28)" value={close} onChangeText={setClose} keyboardType="number-pad" /><Field label="Dia de vencimento (1–28)" value={due} onChangeText={setDue} keyboardType="number-pad" /><PrimaryButton title="Salvar cartão" onPress={() => onSave(name, limit, close, due)} /></ScrollView></View></View></Modal>;
+  return <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}><View style={styles.modalShade}><KeyboardAvoidingView style={styles.modalAvoider} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}><View style={styles.smallModal}><View style={styles.modalHeader}><Text style={styles.modalTitle}>Novo cartão</Text><Pressable onPress={onClose}><Text style={styles.modalClose}>✕</Text></Pressable></View><ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" style={{ flexShrink: 1 }}><Field label="Nome" value={name} onChangeText={setName} placeholder="Cartão principal" /><Field label="Limite total (R$)" value={limit} onChangeText={setLimit} placeholder="3000,00" keyboardType="decimal-pad" /><Field label="Dia de fechamento (1–28)" value={close} onChangeText={setClose} keyboardType="number-pad" /><Field label="Dia de vencimento (1–28)" value={due} onChangeText={setDue} keyboardType="number-pad" /><PrimaryButton title="Salvar cartão" onPress={() => onSave(name, limit, close, due)} /></ScrollView></View></KeyboardAvoidingView></View></Modal>;
 }
 function PurchaseModal({ visible, categories, onClose, onSave }: any) {
-  const [description, setDescription] = useState(''); const [amount, setAmount] = useState(''); const [categoryId, setCategoryId] = useState<number | null>(null); const [date, setDate] = useState(todayIso); const [installments, setInstallments] = useState('1'); const [notes, setNotes] = useState('');
-  useEffect(() => { if (visible) { setDescription(''); setAmount(''); setCategoryId(categories[0]?.id ?? null); setDate(todayIso); setInstallments('1'); setNotes(''); } }, [visible, categories]);
-  return <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}><View style={styles.modalShade}><View style={styles.smallModal}><View style={styles.modalHeader}><Text style={styles.modalTitle}>Registrar compra</Text><Pressable onPress={onClose}><Text style={styles.modalClose}>✕</Text></Pressable></View><ScrollView keyboardShouldPersistTaps="handled"><Field label="Descrição" value={description} onChangeText={setDescription} placeholder="Ex.: compra de mercado" /><Field label="Valor total (R$)" value={amount} onChangeText={setAmount} placeholder="200,00" keyboardType="decimal-pad" /><Label>Categoria</Label><View style={styles.chipWrap}>{categories.map((c: Category) => <Chip key={c.id} title={c.name} active={categoryId === c.id} onPress={() => setCategoryId(c.id)} />)}</View><Field label="Data (AAAA-MM-DD)" value={date} onChangeText={setDate} /><Field label="Número de parcelas" value={installments} onChangeText={setInstallments} keyboardType="number-pad" /><Field label="Observações" value={notes} onChangeText={setNotes} multiline /><PrimaryButton title="Salvar compra" onPress={() => onSave({ description, amount, categoryId, date, installments, notes })} /></ScrollView></View></View></Modal>;
+  const [description, setDescription] = useState(''); const [amount, setAmount] = useState(''); const [categoryId, setCategoryId] = useState<number | null>(null); const [date, setDate] = useState(isoDateToBrazil(todayIso)); const [installments, setInstallments] = useState('1'); const [notes, setNotes] = useState('');
+  useEffect(() => { if (visible) { setDescription(''); setAmount(''); setCategoryId(categories[0]?.id ?? null); setDate(isoDateToBrazil(todayIso)); setInstallments('1'); setNotes(''); } }, [visible, categories]);
+  return <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}><View style={styles.modalShade}><KeyboardAvoidingView style={styles.modalAvoider} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}><View style={styles.smallModal}><View style={styles.modalHeader}><Text style={styles.modalTitle}>Registrar compra</Text><Pressable onPress={onClose}><Text style={styles.modalClose}>✕</Text></Pressable></View><ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" style={{ flexShrink: 1 }}><Field label="Descrição" value={description} onChangeText={setDescription} placeholder="Ex.: compra de mercado" /><Field label="Valor total (R$)" value={amount} onChangeText={setAmount} placeholder="200,00" keyboardType="decimal-pad" /><Label>Categoria</Label><View style={styles.chipWrap}>{categories.map((c: Category) => <Chip key={c.id} title={c.name} active={categoryId === c.id} onPress={() => setCategoryId(c.id)} />)}</View><DateField label="Data da compra (DD/MM/AAAA)" value={date} onChangeText={setDate} /><Field label="Número de parcelas" value={installments} onChangeText={setInstallments} keyboardType="number-pad" /><Field label="Observações" value={notes} onChangeText={setNotes} multiline /><PrimaryButton title="Salvar compra" onPress={() => { const isoDate = brazilDateToIso(date); if (!isoDate) { Alert.alert('Data inválida', 'Informe uma data real no formato DD/MM/AAAA.'); return; } onSave({ description, amount, categoryId, date: isoDate, installments, notes }); }} /></ScrollView></View></KeyboardAvoidingView></View></Modal>;
 }
 function CategoryModal({ visible, onClose, onSave }: any) {
   const [name, setName] = useState('');
@@ -538,7 +613,7 @@ function CategoryModal({ visible, onClose, onSave }: any) {
   const [icon, setIcon] = useState('•');
   useEffect(() => { if (visible) { setName(''); setKind('expense'); setIcon('•'); } }, [visible]);
   const icons = ['•','🏠','🍽️','🚗','💼','🧾','🛍️','💰','📚','💳','📦','📣','✦'];
-  return <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}><View style={styles.modalShade}><View style={styles.smallModal}><View style={styles.modalHeader}><Text style={styles.modalTitle}>Nova categoria</Text><Pressable onPress={onClose}><Text style={styles.modalClose}>✕</Text></Pressable></View><ScrollView keyboardShouldPersistTaps="handled"><Field label="Nome da categoria" value={name} onChangeText={setName} placeholder="Ex.: Pets ou manutenção" /><Label>Tipo</Label><View style={styles.chipWrap}><Chip title="Entrada" active={kind === 'income'} onPress={() => setKind('income')} /><Chip title="Saída" active={kind === 'expense'} onPress={() => setKind('expense')} /></View><Label>Ícone</Label><View style={styles.chipWrap}>{icons.map((x) => <Chip key={x} title={x} active={icon === x} onPress={() => setIcon(x)} />)}</View><PrimaryButton title="Salvar categoria" onPress={() => { if (!name.trim()) { Alert.alert('Nome obrigatório', 'Informe o nome da categoria.'); return; } onSave(name, kind, icon); }} /></ScrollView></View></View></Modal>;
+  return <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}><View style={styles.modalShade}><KeyboardAvoidingView style={styles.modalAvoider} behavior={Platform.OS === 'ios' ? 'padding' : 'height'}><View style={styles.smallModal}><View style={styles.modalHeader}><Text style={styles.modalTitle}>Nova categoria</Text><Pressable onPress={onClose}><Text style={styles.modalClose}>✕</Text></Pressable></View><ScrollView keyboardShouldPersistTaps="handled" keyboardDismissMode="on-drag" style={{ flexShrink: 1 }}><Field label="Nome da categoria" value={name} onChangeText={setName} placeholder="Ex.: Pets ou manutenção" /><Label>Tipo</Label><View style={styles.chipWrap}><Chip title="Entrada" active={kind === 'income'} onPress={() => setKind('income')} /><Chip title="Saída" active={kind === 'expense'} onPress={() => setKind('expense')} /></View><Label>Ícone</Label><View style={styles.chipWrap}>{icons.map((x) => <Chip key={x} title={x} active={icon === x} onPress={() => setIcon(x)} />)}</View><PrimaryButton title="Salvar categoria" onPress={() => { if (!name.trim()) { Alert.alert('Nome obrigatório', 'Informe o nome da categoria.'); return; } onSave(name, kind, icon); }} /></ScrollView></View></KeyboardAvoidingView></View></Modal>;
 }
 
 function LessonModal({ lesson, completed, favorite, onClose, onComplete, onFavorite }: any) {
@@ -553,48 +628,70 @@ function BottomNav({ screen, onChange }: { screen: Screen; onChange: (s: Screen)
 }
 
 async function buildLocalAnswer(db: SQLite.SQLiteDatabase, question: string, summary: Summary, fmt: (cents: number) => string): Promise<string> {
-  const q = question.toLocaleLowerCase('pt-BR');
+  const q = question.toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
   const { start, end } = monthBounds();
-  if (q.includes('gastei') || q.includes('despesa') || q.includes('saída') || q.includes('saida') || q.includes('gasto')) {
+
+  // Intenções específicas primeiro para que perguntas rápidas não caiam no fallback genérico.
+  if (q.includes('prioridade') || q.includes('o que devo fazer') || q.includes('por onde comec') || q.includes('proximo passo')) {
+    const [goals, upcoming] = await Promise.all([getGoals(db), getUpcoming(db, 30)]);
+    const priorities: string[] = [];
+    if (summary.net_cents < 0) priorities.push('Revisar o orçamento: neste mês as saídas realizadas superam as entradas. Comece pelas despesas essenciais e pelos compromissos dos próximos dias.');
+    if (upcoming.length > 0) priorities.push(`Conferir ${upcoming.length} compromisso(s) previsto(s) nos próximos 30 dias, verificando vencimentos e recebimentos.`);
+    if (goals.length > 0) {
+      const goal = [...goals].sort((a, b) => (a.saved_cents / Math.max(1, a.target_cents)) - (b.saved_cents / Math.max(1, b.target_cents)))[0];
+      priorities.push(`Acompanhar a meta “${goal.name}”: ${fmt(goal.saved_cents)} acumulados de ${fmt(goal.target_cents)}.`);
+    }
+    if (summary.net_cents >= 0 && summary.income_cents > 0) priorities.push('Manter as movimentações atualizadas e revisar se o resultado do mês está alinhado ao seu objetivo financeiro.');
+    if (!summary.income_cents && !summary.expense_cents) priorities.push('Registrar suas primeiras entradas e saídas. Sem esses dados, ainda não é possível identificar prioridades financeiras com confiança.');
+    return `Estas são as prioridades mais úteis com os dados cadastrados:\n\n${priorities.slice(0, 3).map((item, index) => `${index + 1}. ${item}`).join('\n\n')}\n\nSão sugestões locais baseadas nos registros disponíveis; revise-as conforme sua realidade.`;
+  }
+
+  if (q.includes('para onde vai meu dinheiro') || q.includes('para onde vai o meu dinheiro') || q.includes('para onde vai o dinheiro') || q.includes('onde gasto') || q.includes('distribuicao dos gastos') || q.includes('maiores gastos') || q.includes('maior gasto') || q.includes('mais gastei') || q.includes('categoria')) {
+    const top = await getExpenseBreakdown(db, start, end);
+    if (!top.length || !summary.expense_cents) return 'Ainda não há despesas realizadas suficientes neste mês para mostrar para onde o dinheiro está indo. Registre as saídas e selecione uma categoria para cada uma; depois, poderei mostrar os maiores grupos de gastos.';
+    const distribution = top.slice(0, 5).map((item, index) => {
+      const percent = Math.round((item.total_cents / Math.max(1, summary.expense_cents)) * 100);
+      return `${index + 1}. ${item.name}: ${fmt(item.total_cents)} (${percent}%)`;
+    }).join('\n');
+    const largest = top[0];
+    return `Aqui está a distribuição das despesas realizadas neste mês, conforme os lançamentos cadastrados:\n\n${distribution}\n\nA maior categoria registrada é ${largest.name}. Isso não significa necessariamente que ela deva ser reduzida: primeiro avalie se os gastos são essenciais e se estão alinhados ao seu orçamento.`;
+  }
+
+  if (q.includes('gastei') || q.includes('despesa') || q.includes('saida') || q.includes('gasto')) {
     const top = await getExpenseBreakdown(db, start, end);
     if (!summary.expense_cents) return 'Ainda não há despesas marcadas como realizadas neste mês. Registre suas saídas para que eu possa analisar os valores reais.';
     const largest = top[0];
     return `Neste mês, suas despesas realizadas somam ${fmt(summary.expense_cents)}. ${largest ? `A maior categoria registrada é ${largest.name}, com ${fmt(largest.total_cents)}.` : ''} Compare esse valor com as receitas e revise as categorias mais relevantes antes de decidir onde ajustar o orçamento.`;
   }
   if (q.includes('receita') || q.includes('ganhei') || q.includes('entrada') || q.includes('faturamento')) {
-    return `Você registrou ${fmt(summary.income_cents)} em entradas realizadas neste mês. Esse valor representa as entradas cadastradas no EvoGest, não uma consulta automática ao banco. Confira se todos os recebimentos foram registrados e se as transferências estão classificadas corretamente.`;
+    return `Você registrou ${fmt(summary.income_cents)} em entradas realizadas neste mês. Esse valor representa os lançamentos cadastrados no EvoGest, não uma consulta automática ao banco. Confira se todos os recebimentos foram registrados e se as transferências estão classificadas corretamente.`;
   }
-  if (q.includes('saldo') || q.includes('dinheiro disponível') || q.includes('quanto tenho')) {
+  if (q.includes('saldo') || q.includes('dinheiro disponivel') || q.includes('quanto tenho') || q.includes('quanto posso gastar')) {
     const acc = await getAccounts(db);
     const detail = acc.map((a) => `${a.name}: ${fmt(a.balance_cents ?? a.opening_cents)}`).join('\n');
-    return `O saldo consolidado das contas cadastradas é ${fmt(summary.balance_cents)}.\n${detail || 'Nenhuma conta cadastrada.'}\nEsse total considera saldos iniciais e movimentações marcadas como realizadas. Não inclui automaticamente contas bancárias que você ainda não cadastrou.`;
+    return `O saldo consolidado das contas cadastradas é ${fmt(summary.balance_cents)}.\n${detail || 'Nenhuma conta cadastrada.'}\nEsse total considera os registros locais e não inclui automaticamente contas bancárias que você ainda não cadastrou. Antes de definir quanto pode gastar, considere também as contas previstas e necessidades essenciais.`;
   }
-  if (q.includes('resultado') || q.includes('lucro') || q.includes('prejuízo') || q.includes('prejuizo')) {
+  if (q.includes('resultado') || q.includes('lucro') || q.includes('prejuizo')) {
     return `O resultado financeiro registrado neste mês é ${fmt(summary.net_cents)}: entradas realizadas (${fmt(summary.income_cents)}) menos saídas realizadas (${fmt(summary.expense_cents)}). Para um pequeno negócio, esse indicador não é necessariamente lucro contábil; custos, tributos e critérios de competência podem exigir análise adicional.`;
   }
-  if (q.includes('conta') || q.includes('venc') || q.includes('receber') || q.includes('pagar')) {
+  if (q.includes('conta') || q.includes('venc') || q.includes('receber') || q.includes('pagar') || q.includes('compromisso')) {
     const upcoming = await getUpcoming(db, 30);
     if (!upcoming.length) return 'Não encontrei compromissos marcados como previstos nos próximos 30 dias. Isso pode significar que não há compromissos cadastrados, e não necessariamente que você não tenha contas a pagar ou receber.';
-    const total = upcoming.reduce((s, t) => s + t.amount_cents, 0);
+    const total = upcoming.reduce((sum, t) => sum + t.amount_cents, 0);
     return `Há ${upcoming.length} compromisso(s) previsto(s) nos próximos 30 dias, totalizando ${fmt(total)} em valores registrados. Confira datas e status para confirmar se os pagamentos e recebimentos estão corretos.`;
-  }
-  if (q.includes('categoria') || q.includes('maior gasto') || q.includes('mais gastei')) {
-    const top = await getExpenseBreakdown(db, start, end);
-    if (!top.length) return 'Ainda não há despesas realizadas suficientes para comparar categorias. Registre as saídas e escolha uma categoria para cada lançamento.';
-    return `As maiores categorias de despesas deste mês são: ${top.slice(0, 3).map((x, i) => `${i + 1}. ${x.name}: ${fmt(x.total_cents)}`).join('; ')}. Use essa análise como ponto de partida; despesas altas podem ser essenciais e nem sempre devem ser reduzidas.`;
   }
   if (q.includes('econom') || q.includes('poupar') || q.includes('reserva')) {
     if (!summary.income_cents) return 'Para começar, registre suas entradas e despesas. Depois, podemos observar quanto sobra em um mês típico. Se sua renda estiver comprometida com necessidades essenciais, priorize compreender as obrigações e buscar alternativas viáveis antes de definir uma meta de economia.';
     const rate = Math.round(summary.net_cents / Math.max(summary.income_cents, 1) * 100);
     return `Seu resultado registrado equivale a ${rate}% das entradas deste mês. Isso é um retrato do período, não uma previsão. Uma primeira ação é revisar despesas por categoria e definir uma meta que caiba depois das necessidades essenciais e compromissos. O EvoGest não presume que todo usuário tenha sobra para poupar.`;
   }
-  if (q.includes('negócio') || q.includes('empresa') || q.includes('capital de giro') || q.includes('caixa')) {
+  if (q.includes('negocio') || q.includes('empresa') || q.includes('capital de giro') || q.includes('caixa')) {
     return `No período atual, as entradas realizadas somam ${fmt(summary.income_cents)} e as saídas realizadas somam ${fmt(summary.expense_cents)}. Também há ${summary.pending_count} compromisso(s) previsto(s) no mês. Para avaliar o caixa do negócio, revise as datas de recebimentos e pagamentos, custos, tributos e possíveis atrasos. O EvoGest não consulta seus bancos nem confirma recebimentos automaticamente.`;
   }
-  return 'Posso ajudar com saldos, entradas, despesas, categorias, contas previstas, resultados e hábitos financeiros. Experimente uma pergunta como “Quanto gastei este mês?” ou “Qual foi meu resultado?”. Minhas respostas usam regras locais e os dados cadastrados neste aparelho; não sou uma IA generativa remota.';
+  return 'Posso ajudar com distribuição dos gastos, prioridades, saldos, entradas, despesas, categorias, contas previstas, resultados e hábitos financeiros. Experimente “Para onde vai meu dinheiro?”, “Quais são minhas prioridades?” ou “Quanto gastei este mês?”. Minhas respostas usam regras locais e os dados cadastrados neste aparelho; não sou uma IA generativa remota.';
 }
 
-const styles = StyleSheet.create({
+const baseStyleDefinitions: Record<string, any> = {
   safe: { flex: 1, backgroundColor: BG }, center: { flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: BG, padding: 26 }, loadingText: { color: MUTED, marginTop: 14, fontSize: 14 },
   appHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', paddingHorizontal: 18, paddingTop: 8, paddingBottom: 10 }, brandRow: { flexDirection: 'row', alignItems: 'center', gap: 10 }, brandIcon: { height: 43, width: 43, borderRadius: 14, backgroundColor: PURPLE, alignItems: 'center', justifyContent: 'center' }, brandIconText: { color: '#FFFFFF', fontWeight: '900', fontSize: 17 }, brandTitle: { color: INK, fontSize: 18, fontWeight: '900', letterSpacing: -0.5 }, brandSubtitle: { color: MUTED, fontSize: 11, marginTop: 1 }, headerButtons: { flexDirection: 'row', gap: 8 }, iconButton: { height: 38, width: 38, borderRadius: 13, backgroundColor: '#FFFFFF', borderWidth: 1, borderColor: LINE, alignItems: 'center', justifyContent: 'center' }, iconButtonText: { color: PURPLE, fontSize: 20, fontWeight: '700' },
   screenHead: { paddingHorizontal: 20, paddingBottom: 10, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }, screenTitle: { fontSize: 24, color: INK, fontWeight: '900', letterSpacing: -0.7 }, addButton: { backgroundColor: VIOLET, height: 39, width: 39, borderRadius: 13, alignItems: 'center', justifyContent: 'center' }, addButtonText: { fontSize: 26, color: '#FFFFFF', lineHeight: 28 }, page: { flex: 1 }, pageContent: { paddingHorizontal: 15, paddingBottom: 22, gap: 12 }, card: { backgroundColor: '#FFFFFF', borderRadius: 22, borderWidth: 1, borderColor: '#EFEAF5', padding: 16, shadowColor: '#291344', shadowOpacity: 0.035, shadowRadius: 8, shadowOffset: { width: 0, height: 3 }, elevation: 1 },
@@ -609,5 +706,51 @@ const styles = StyleSheet.create({
   accountsHero: { backgroundColor: '#2A164A' }, accountRow: { flexDirection: 'row', gap: 10, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#F0ECF5', paddingVertical: 12 }, accountIcon: { height: 38, width: 38, borderRadius: 13, backgroundColor: PALE, alignItems: 'center', justifyContent: 'center' }, accountIconText: { color: PURPLE, fontSize: 17, fontWeight: '900' }, accountBalance: { color: INK, fontWeight: '900', fontSize: 12 }, goalHero: { backgroundColor: '#F0E8FF' }, reportMetric: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#F0ECF5' }, creditCardTile: { backgroundColor: '#321357', borderRadius: 18, padding: 16, marginTop: 9 }, creditCardSelected: { backgroundColor: '#6A2FB4', borderColor: '#C6A7F7', borderWidth: 2 }, creditCardName: { color: '#FFFFFF', fontSize: 14, fontWeight: '900' }, creditCardBadge: { color: '#CDB9EE', fontSize: 10, fontWeight: '900' }, creditCardAmount: { color: '#FFFFFF', fontSize: 24, fontWeight: '900', marginTop: 23 }, creditCardFoot: { color: '#D4C4E9', fontSize: 10, marginTop: 6 },
   settingsDivider: { height: 1, backgroundColor: LINE, marginVertical: 14 }, toggle: { width: 48, height: 27, borderRadius: 20, backgroundColor: '#D9D0E4', justifyContent: 'center', padding: 3 }, toggleOn: { backgroundColor: VIOLET }, toggleKnob: { height: 21, width: 21, borderRadius: 11, backgroundColor: '#FFFFFF' }, toggleKnobOn: { alignSelf: 'flex-end' },
   onboardingPage: { padding: 18, paddingBottom: 35, gap: 13 }, onboardingLogo: { alignSelf: 'center', marginTop: 15, backgroundColor: PURPLE, width: 74, height: 74, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }, onboardingLogoText: { fontSize: 30, color: '#FFFFFF', fontWeight: '900' }, onboardingEyebrow: { color: VIOLET, fontSize: 10, fontWeight: '900', letterSpacing: 2, textAlign: 'center', marginTop: 5 }, onboardingTitle: { color: INK, fontSize: 36, fontWeight: '900', textAlign: 'center', letterSpacing: -1.3 }, onboardingSubtitle: { color: MUTED, fontSize: 13, textAlign: 'center', marginBottom: 7 }, choice: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: LINE, borderRadius: 13, padding: 12, marginTop: 7, backgroundColor: '#FFFFFF' }, choiceSelected: { borderColor: VIOLET, backgroundColor: '#F8F3FF' }, radio: { borderWidth: 1.5, borderColor: '#B5A9C3', borderRadius: 20, width: 18, height: 18 }, radioSelected: { borderWidth: 5, borderColor: VIOLET }, choiceTitle: { color: INK, fontWeight: '800', fontSize: 12 }, choiceText: { color: MUTED, fontSize: 10, marginTop: 3 }, privacyNote: { color: MUTED, fontSize: 10, textAlign: 'center', lineHeight: 16, marginTop: 6 },
-  modalSafe: { flex: 1, backgroundColor: BG }, modalShade: { flex: 1, justifyContent: 'flex-end', backgroundColor: '#160B2480' }, smallModal: { backgroundColor: BG, maxHeight: '92%', borderTopLeftRadius: 25, borderTopRightRadius: 25, padding: 19, paddingBottom: 26 }, modalHeader: { paddingHorizontal: 18, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: LINE }, modalTitle: { color: INK, fontSize: 18, fontWeight: '900' }, modalClose: { color: MUTED, fontSize: 22, paddingHorizontal: 5 }, modalContent: { padding: 18, paddingBottom: 35, gap: 2 },
-});
+  modalSafe: { flex: 1, backgroundColor: BG }, modalAvoider: { flex: 1, width: '100%', justifyContent: 'flex-end' }, modalShade: { flex: 1, justifyContent: 'flex-end', backgroundColor: '#160B2480' }, smallModal: { backgroundColor: BG, maxHeight: '90%', flexShrink: 1, borderTopLeftRadius: 25, borderTopRightRadius: 25, padding: 19, paddingBottom: 26 }, modalHeader: { paddingHorizontal: 18, paddingVertical: 13, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderBottomWidth: 1, borderBottomColor: LINE }, modalTitle: { color: INK, fontSize: 18, fontWeight: '900' }, modalClose: { color: MUTED, fontSize: 22, paddingHorizontal: 5 }, modalContent: { padding: 18, paddingBottom: 35, gap: 2 },
+};
+
+let styles: Record<string, any> = StyleSheet.create(baseStyleDefinitions);
+let appliedDarkMode: boolean | null = null;
+
+const DARK_BACKGROUND_MAP: Record<string, string> = {
+  '#FFFFFF': '#211A2A', '#FBFAFD': '#261F31', '#F8F7FC': '#15111C', '#F4F0F9': '#342B40',
+  '#F0ECF5': '#352B42', '#F1EAFE': '#302340', '#F0E8FF': '#302340', '#F8F5FC': '#282031',
+  '#F3EFF8': '#352B42', '#EFEAF5': '#3A3045', '#EBE5F1': '#3A3045', '#EAE4F2': '#40354B',
+  '#E8E1F0': '#40354B', '#E4DCEC': '#40354B', '#D9D0E4': '#40354B', '#E5F6EF': '#19392D',
+  '#FCE8ED': '#402330', '#E1F5E9': '#19392D', '#F8F3FF': '#302340', '#D9C9F6': '#3A2A50',
+  '#E9DDFB': '#342347', '#E1D3F8': '#514068', '#E4D8FA': '#514068', '#EAE1F7': '#40354B',
+  '#F5F7FC': '#15111C', '#F2EAFB': '#302340', '#F0F8F4': '#19392D',
+  '#E8DDEB': '#392B42', '#F4ECFB': '#302340', '#E1D8EF': '#40354B'
+};
+const DARK_TEXT_MAP: Record<string, string> = {
+  '#241B32': '#F4EFFA', '#81768F': '#B7ABC5', '#6F647A': '#C8BED4', '#665A75': '#C8BED4',
+  '#554963': '#DAD0E4', '#5B5068': '#D5CBDF', '#6D617A': '#D5CBDF', '#7C7188': '#B7ABC5',
+  '#4B1D8C': '#C9B4FF', '#7C3AED': '#C3A1FF'
+};
+const DARK_BORDER_MAP: Record<string, string> = {
+  '#EFEAF5': '#3A3045', '#EBE5F1': '#3A3045', '#EAE4F2': '#40354B', '#E8E1F0': '#40354B',
+  '#E4DCEC': '#40354B', '#F0ECF5': '#352B42', '#D9C9F6': '#61467A', '#E1D3F8': '#514068',
+  '#E4D8FA': '#514068'
+};
+
+function applyGlobalTheme(dark: boolean) {
+  if (appliedDarkMode === dark) return;
+  appliedDarkMode = dark;
+  const transformed: Record<string, any> = {};
+  for (const [name, definition] of Object.entries(baseStyleDefinitions)) {
+    const next: Record<string, any> = {};
+    for (const [property, value] of Object.entries(definition as Record<string, any>)) {
+      if (!dark || typeof value !== 'string' || !value.startsWith('#')) { next[property] = value; continue; }
+      if (property === 'backgroundColor') next[property] = DARK_BACKGROUND_MAP[value.toUpperCase()] ?? value;
+      else if (property === 'color') next[property] = DARK_TEXT_MAP[value.toUpperCase()] ?? value;
+      else if (property.toLowerCase().includes('bordercolor')) next[property] = DARK_BORDER_MAP[value.toUpperCase()] ?? value;
+      else next[property] = value;
+    }
+    transformed[name] = next;
+  }
+  styles = StyleSheet.create(transformed);
+}
+
+export default function App() {
+  return <SafeAreaProvider><AppContent /></SafeAreaProvider>;
+}
