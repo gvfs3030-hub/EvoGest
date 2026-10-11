@@ -25,7 +25,7 @@ export const LESSONS: Lesson[] = [
   {
     id: 'base-03', title: 'Construa uma reserva aos poucos', category: 'Economia', duration: '5 min', level: 'Intermediário',
     summary: 'Uma reserva pode reduzir a necessidade de recorrer a crédito caro quando surge um imprevisto.',
-    body: ['A reserva deve considerar suas despesas essenciais, a estabilidade da renda, pessoas que dependem de você e outras proteções disponíveis.', 'Comece com uma meta inicial viável e aumente aos poucos. Não deixe de pagar necessidades essenciais ou assumir dívida cara apenas para atingir uma meta de economia.', 'Antes de escolher onde manter o dinheiro, considere segurança, liquidez, custos e riscos. O conteúdo do EvoGest é educativo e não substitui uma avaliação individual.'],
+    body: ['A reserva deve considerar suas despesas essenciais, a estabilidade da renda, pessoas que dependem de você e outras proteções disponíveis.', 'Comece com uma meta inicial viável e aumente aos poucos. Não deixe de pagar necessidades essenciais ou assumir dívida cara apenas para atingir uma meta de economia.', 'Antes de escolher onde manter o dinheiro, considere segurança, liquidez, custos e riscos. O conteúdo do GestVolt é educativo e não substitui uma avaliação individual.'],
     action: 'Defina uma primeira meta de reserva realista.',
   },
   {
@@ -67,7 +67,7 @@ export const LESSONS: Lesson[] = [
   {
     id: 'base-10', title: 'Aprenda a reconhecer golpes financeiros', category: 'Segurança', duration: '4 min', level: 'Todos',
     summary: 'Promessas de retorno alto, rápido e garantido merecem desconfiança.',
-    body: ['Desconfie de pressão para decidir imediatamente, pedidos de segredo, transferências para contas desconhecidas e garantias incompatíveis com o risco.', 'Verifique a identidade da instituição e as informações em fontes oficiais quando tiver conexão. O EvoGest offline não consegue confirmar a legitimidade atual de uma oferta.', 'Nunca compartilhe senhas, códigos de autenticação ou chaves privadas. Se houver dúvida, não transfira dinheiro até verificar por um canal independente.'],
+    body: ['Desconfie de pressão para decidir imediatamente, pedidos de segredo, transferências para contas desconhecidas e garantias incompatíveis com o risco.', 'Verifique a identidade da instituição e as informações em fontes oficiais quando tiver conexão. O GestVolt offline não consegue confirmar a legitimidade atual de uma oferta.', 'Nunca compartilhe senhas, códigos de autenticação ou chaves privadas. Se houver dúvida, não transfira dinheiro até verificar por um canal independente.'],
     action: 'Leia novamente antes de aceitar qualquer oferta financeira urgente.',
   },
   {

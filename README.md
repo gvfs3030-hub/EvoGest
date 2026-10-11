@@ -1,14 +1,23 @@
-# EvoGest Native — Android offline
+# GestVolt — aplicativo financeiro Android offline
 
-Aplicativo Expo/React Native nativo com SQLite/SQLCipher local. Não usa backend nem APIs remotas. A workflow do GitHub gera um APK Android de release em **Actions → Build EvoGest Android APK → Artifacts**.
+**Slogan:** Gestão inteligente. Resultados reais.
 
-## Requisitos
+Aplicativo Expo/React Native nativo para Android com SQLite/SQLCipher local. Sem backend, sem APIs remotas e sem dependência de internet durante a utilização.
+
+## Gerar o APK pelo GitHub Actions
+
+1. Envie o conteúdo deste projeto para o repositório GitHub, mantendo a pasta `.github/workflows`.
+2. Acesse **Actions → Build GestVolt Android APK → Run workflow**.
+3. Aguarde a conclusão e baixe o artefato `gestvolt-android-apk`.
+4. Extraia o arquivo e instale o APK no dispositivo Android.
+
+O ambiente de build precisa de internet para baixar dependências. O aplicativo instalado mantém as funcionalidades financeiras offline.
+
+## Requisitos locais
 
 - Node.js 22+
 - Java 17
 - Android SDK 36 para build local
-
-## Rodar localmente
 
 ```bash
 npm install
@@ -16,40 +25,36 @@ npx expo prebuild --platform android
 npx expo run:android
 ```
 
-Como o app usa SQLCipher, teste no build nativo; não use o Expo Go como validação de armazenamento criptografado.
+Como o banco utiliza SQLCipher, valide o armazenamento em um build nativo; não use o Expo Go como validação final da criptografia.
 
-## Gerar APK pelo GitHub
+## Principais funcionalidades
 
-1. Envie a pasta para um repositório GitHub.
-2. Mantenha o branch principal como `main` ou ajuste `.github/workflows/build-android-apk.yml`.
-3. A workflow executa no push para `main` ou manualmente em **Actions → Build EvoGest Android APK → Run workflow**.
-4. Baixe o artefato `evogest-android-apk` quando o job concluir.
+- Contas, entradas, despesas, metas, cartões e compras parceladas.
+- Fluxo de caixa, categorias, gráficos e relatórios locais.
+- Assistente financeiro baseado em regras e cálculos locais.
+- Área GestVolt Evolui com dicas e conteúdos educativos embutidos.
+- Tema escuro, formulários adaptados ao teclado Android e datas `DD/MM/AAAA`.
+- Backup e restauração por arquivo local, sem nuvem.
 
-A workflow compila o projeto nativo via Expo Prebuild e Gradle. O build precisa de acesso à internet para baixar dependências; isso não habilita rede no app instalado. `android.permission.INTERNET` e `ACCESS_NETWORK_STATE` são bloqueadas na configuração Android do EvoGest.
+## Compatibilidade com a versão EvoGest
 
-## Armazenamento e segurança
+O nome que aparece na interface e no Android é GestVolt. O identificador interno Android `com.evogest.app`, o arquivo local `evogest.db` e a chave de criptografia com prefixo `evogest` foram mantidos intencionalmente para permitir a atualização da instalação anterior e preservar o acesso aos dados locais. Não altere esse identificador se deseja atualizar a instalação existente. Os backups novos passam a se identificar como GestVolt, mas backups EvoGest anteriores continuam aceitos.
 
-- O banco SQLite é configurado para SQLCipher.
-- A chave do banco é criada localmente e armazenada pelo `expo-secure-store`.
-- O backup JSON é criado no dispositivo e só sai dele se o usuário escolher um destino de compartilhamento.
-- Se o armazenamento seguro da chave for perdido, um backup exportado previamente poderá ser necessário. Guarde backups com cuidado.
+Faça um backup antes de instalar a nova build. A assinatura Android precisa ser compatível com a versão anterior para atualizar o app sem desinstalá-lo.
 
-## Limitações honestas da primeira versão
+## Offline e privacidade
 
-- O Evo Assistente é um mecanismo local baseado em regras e cálculos, não um LLM generativo.
-- Não há integração bancária automática nem sincronização entre aparelhos.
-- Compras cadastradas no módulo Cartões são um controle auxiliar e ainda não entram automaticamente nos resultados de despesas; evite lançar a mesma compra também como despesa sem considerar a dupla contagem.
-- Não substitui contabilidade oficial, orientação tributária ou consultoria de investimentos.
+- Não existe sincronização entre aparelhos nem integração bancária automática.
+- O assistente não é um modelo generativo remoto: responde por regras locais e dados cadastrados.
+- Os conteúdos educacionais são embarcados e não são atualizados em tempo real.
+- Mantenha backups em local seguro; perder o aparelho ou a chave do banco pode impedir a recuperação sem cópia válida.
 
+## Atualizações da versão 1.2.0
 
-## Ajustes desta versão (1.1.0)
-
-- Área segura de Android aplicada com `react-native-safe-area-context` para respeitar a barra de status e a navegação do sistema.
-- Botão voltar do Android retorna à tela visitada anteriormente; sem histórico, permite a ação padrão do sistema. Ao digitar, o primeiro voltar fecha o teclado quando o evento chega à aplicação.
-- Datas exibidas e digitadas no padrão brasileiro `DD/MM/AAAA`, com máscara automática e teclado numérico; datas são convertidas para ISO somente ao salvar no banco local.
-- Formulários em modais usam `KeyboardAvoidingView` e listas roláveis para reduzir campos escondidos pelo teclado. A navegação inferior é temporariamente ocultada enquanto o teclado está aberto.
-- Perguntas rápidas do Evo Assistente “Para onde vai meu dinheiro?” e “Quais são minhas prioridades?” possuem regras locais de resposta e usam os dados cadastrados.
-- Tema escuro persistente, selecionável em Configurações.
-- Versão Android incrementada para permitir instalação como atualização quando a assinatura do APK for compatível.
-
-O projeto continua sem backend e sem chamadas de rede em tempo de execução. A compilação ainda baixa dependências no ambiente de build. Faça backup dos dados do aplicativo antes de instalar uma build nova.
+- Marca renomeada para **GestVolt**, com novo ícone roxo/magenta e slogan **“Gestão inteligente. Resultados reais.”**
+- Corrigido o reset do formulário de compra no cartão ao abrir o teclado, estabilizando a lista de categorias.
+- Validação da descrição, do valor, da data e do número de parcelas antes de registrar uma compra.
+- Formulários de conta, cartão, compra, meta, categoria e movimentação passam a ocupar uma tela rolável, com margem inferior adicional para os botões e adaptação ao teclado.
+- Campos monetários começam vazios; `0,00` aparece apenas como placeholder em tom discreto.
+- Backup novo identificado como GestVolt; importação permanece compatível com backups antigos EvoGest.
+- Incremento de versão Android para `1.2.0` / `versionCode 3`.

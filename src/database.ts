@@ -515,14 +515,14 @@ export async function exportBackup(db: SQLiteDatabase) {
   const tableNames = ['profile', 'accounts', 'categories', 'transactions', 'goals', 'lesson_progress', 'assistant_history', 'settings', 'cards', 'card_purchases'];
   const tables: Record<string, unknown[]> = {};
   for (const table of tableNames) tables[table] = await db.getAllAsync<any>(`SELECT * FROM ${table}`);
-  return { app: 'EvoGest', format_version: 2, exported_at: new Date().toISOString(), tables };
+  return { app: 'GestVolt', format_version: 2, exported_at: new Date().toISOString(), tables };
 }
 
 export async function restoreBackup(db: SQLiteDatabase, raw: unknown): Promise<void> {
   const backup = raw as any;
   const allowed = ['profile', 'accounts', 'categories', 'transactions', 'goals', 'lesson_progress', 'assistant_history', 'settings', 'cards', 'card_purchases'];
-  if (!backup || backup.app !== 'EvoGest' || ![1, 2].includes(backup.format_version) || !backup.tables || allowed.some((table) => !Array.isArray(backup.tables[table]))) {
-    throw new Error('O arquivo não é um backup EvoGest válido ou usa uma versão incompatível.');
+  if (!backup || !['GestVolt', 'EvoGest'].includes(backup.app) || ![1, 2].includes(backup.format_version) || !backup.tables || allowed.some((table) => !Array.isArray(backup.tables[table]))) {
+    throw new Error('O arquivo não é um backup GestVolt válido ou usa uma versão incompatível.');
   }
   for (const table of allowed) if (!Array.isArray(backup.tables[table])) throw new Error(`Dados inválidos na tabela ${table}.`);
   await db.withTransactionAsync(async () => {

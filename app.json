@@ -1,24 +1,24 @@
 {
   "expo": {
-    "name": "EvoGest",
-    "slug": "evogest-native",
-    "version": "1.1.0",
+    "name": "GestVolt",
+    "slug": "gestvolt-finance",
+    "version": "1.2.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
-    "scheme": "evogest",
+    "scheme": "gestvolt",
     "newArchEnabled": true,
     "icon": "./assets/icon.png",
     "splash": {
       "image": "./assets/splash.png",
       "resizeMode": "contain",
-      "backgroundColor": "#4B1D8C"
+      "backgroundColor": "#0D0011"
     },
     "android": {
       "package": "com.evogest.app",
-      "versionCode": 2,
+      "versionCode": 3,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
-        "backgroundColor": "#4B1D8C"
+        "backgroundColor": "#0D0011"
       },
       "blockedPermissions": [
         "android.permission.INTERNET",
