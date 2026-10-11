@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "EvoGest",
+    "slug": "evogest-native",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "scheme": "evogest",
+    "newArchEnabled": true,
+    "icon": "./assets/icon.png",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#4B1D8C"
+    },
+    "android": {
+      "package": "com.evogest.app",
+      "versionCode": 1,
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#4B1D8C"
+      },
+      "blockedPermissions": [
+        "android.permission.INTERNET",
+        "android.permission.ACCESS_NETWORK_STATE"
+      ],
+      "allowBackup": false,
+      "softwareKeyboardLayoutMode": "resize"
+    },
+    "plugins": [
+      [
+        "expo-sqlite",
+        {
+          "enableFTS": true,
+          "useSQLCipher": true,
+          "android": {
+            "useSQLCipher": true
+          }
+        }
+      ],
+      "expo-secure-store",
+      "expo-document-picker"
+    ],
+    "extra": {
+      "offlineOnly": true,
+      "description": "Gestão financeira local e offline. Sem servidor ou API remota."
+    }
+  }
+}
