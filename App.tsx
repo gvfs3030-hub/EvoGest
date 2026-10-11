@@ -8,6 +8,7 @@ import * as SQLite from 'expo-sqlite';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import * as DocumentPicker from 'expo-document-picker';
+import Svg, { Circle, Line, Path, Text as SvgText } from 'react-native-svg';
 import {
   Account, Audience, Category, Goal, MonthlyPoint, Profile, Summary, Transaction,
   TransactionStatus, TransactionType, addAccount, addCard, addCardPurchase,
@@ -19,6 +20,8 @@ import {
   saveProfile, setSetting, updateGoalSaved, updateTransaction, getSettings, getTransaction,
 } from './src/database';
 import { DAILY_TIPS, LESSONS, Lesson } from './src/content';
+import { getReportAnalytics } from './src/reports';
+import type { ReportAnalytics, ReportPeriod, ReportPoint, ReportSlice } from './src/reports';
 
 const PURPLE = '#4B1D8C';
 const VIOLET = '#7C3AED';
@@ -436,7 +439,7 @@ function AppContent() {
       {screen === 'evolui' && <EvoluiScreen progress={progress} filter={educationFilter} setFilter={setEducationFilter} onOpen={setSelectedLesson} fmt={fmt} />}
       {screen === 'accounts' && <AccountsScreen accounts={accounts} fmt={fmt} onAdd={() => setModal('account')} onReports={() => navigateTo('reports')} />}
       {screen === 'goals' && <GoalsScreen goals={goals} fmt={fmt} onAdd={() => setModal('goal')} onEdit={(goal: Goal) => { setGoalModalInitial(goal); setModal('goal'); }} />}
-      {screen === 'reports' && <ReportsScreen summary={summary} monthly={monthly} breakdown={expenseBreakdown} fmt={fmt} onExportCsv={exportCsv} onBackup={exportData} />}
+      {screen === 'reports' && <ReportsScreen db={db} summary={summary} fmt={fmt} onExportCsv={exportCsv} onBackup={exportData} darkMode={darkMode} showValues={showValues} />}
       {screen === 'cards' && <CardsScreen cards={cards} purchases={cardPurchases} selectedCard={selectedCard} onChoose={async (id: number) => { setSelectedCard(id); await refreshCardPurchases(id); }} onAddCard={() => setModal('card')} onAddPurchase={() => { if (!selectedCard) { Alert.alert('Selecione um cartão', 'Escolha um cartão para registrar uma compra.'); return; } setModal('purchase'); }} fmt={fmt} />}
       {screen === 'settings' && <SettingsScreen showValues={showValues} onToggleValues={toggleHideValues} darkMode={darkMode} onToggleTheme={toggleTheme} onExport={exportData} onImport={importData} onExportCsv={exportCsv} onClearHistory={async () => { await clearAssistantHistory(db); await refresh(db); }} onClearAll={clearData} onAddCategory={() => setModal('category')} />}
     </ScrollView>
@@ -549,12 +552,332 @@ function AccountsScreen({ accounts, fmt, onAdd, onReports }: any) {
 function GoalsScreen({ goals, fmt, onAdd, onEdit }: any) {
   return <View><Card style={styles.goalHero}><Text style={styles.heroEyebrow}>SEUS PRÓXIMOS PASSOS</Text><Text style={styles.cardTitle}>Transforme intenção em plano.</Text><Text style={styles.bodyText}>Defina um objetivo, acompanhe o progresso e ajuste o ritmo conforme sua realidade.</Text><PrimaryButton title="＋ Criar meta" onPress={onAdd} /></Card>{goals.length === 0 ? <Card><EmptyState title="Nenhuma meta cadastrada" text="Comece com uma meta simples e viável para a sua situação." /></Card> : goals.map((goal: Goal) => { const ratio = Math.min(1, goal.saved_cents / goal.target_cents); return <Card key={goal.id}><View style={styles.rowBetween}><Text style={styles.cardTitle}>{goal.name}</Text><Text style={styles.goalPercent}>{Math.round(ratio * 100)}%</Text></View><ProgressBar ratio={ratio} /><View style={styles.rowBetween}><Text style={styles.muted}>Acumulado</Text><Text style={styles.moneyText}>{fmt(goal.saved_cents)}</Text></View><View style={styles.rowBetween}><Text style={styles.muted}>Meta</Text><Text style={styles.moneyText}>{fmt(goal.target_cents)}</Text></View><Text style={styles.muted}>{goal.target_date ? `Prazo: ${ptLongDate(goal.target_date)}` : 'Sem prazo definido'} · {goal.kind === 'business' ? 'Negócio' : 'Pessoal'}</Text><PrimaryButton title="Atualizar valor acumulado" variant="secondary" onPress={() => onEdit(goal)} /></Card>; })}</View>;
 }
-function ReportsScreen({ summary, monthly, breakdown, fmt, onExportCsv, onBackup }: any) {
-  return <View><Card><Text style={styles.cardTitle}>Resumo do mês</Text><View style={styles.reportMetric}><Text style={styles.bodyText}>Entradas realizadas</Text><Text style={[styles.moneyText, { color: GREEN }]}>{fmt(summary.income_cents)}</Text></View><View style={styles.reportMetric}><Text style={styles.bodyText}>Saídas realizadas</Text><Text style={[styles.moneyText, { color: RED }]}>{fmt(summary.expense_cents)}</Text></View><View style={styles.reportMetric}><Text style={styles.bodyText}>Resultado financeiro</Text><Text style={styles.moneyText}>{fmt(summary.net_cents)}</Text></View><View style={styles.reportMetric}><Text style={styles.bodyText}>Saldo das contas</Text><Text style={styles.moneyText}>{fmt(summary.balance_cents)}</Text></View></Card>
-    <Card><SectionHeading title="Resultado por mês" /><MiniBars data={monthly} valueKey="net_cents" color={PURPLE} formatter={(v) => `${Math.round(v / 100)}`} /><Text style={styles.muted}>Resultado calculado com entradas e saídas realizadas. Não representa necessariamente lucro contábil.</Text></Card>
-    <Card><SectionHeading title="Categorias de despesa" />{breakdown.length === 0 ? <Text style={styles.muted}>Ainda não existem despesas realizadas suficientes.</Text> : breakdown.map((b: any) => <View key={b.name} style={styles.rowBetween}><Text style={styles.categoryName}>{b.icon} {b.name}</Text><Text style={styles.categoryAmount}>{fmt(b.total_cents)}</Text></View>)}</Card>
-    <Card><SectionHeading title="Exportar dados" /><Text style={styles.bodyText}>Os arquivos são gerados localmente. O aplicativo só compartilha um arquivo se você escolher uma opção na janela do Android.</Text><PrimaryButton title="Exportar movimentações CSV" onPress={onExportCsv} /><View style={{ height: 9 }} /><PrimaryButton title="Criar backup completo (JSON)" variant="secondary" onPress={onBackup} /></Card></View>;
+const REPORT_PALETTE = ['#7C3AED', '#E83E8C', '#A78BFA', '#0EA5A4', '#F59E0B', '#3B82F6', '#10B981', '#F97316'];
+
+type ReportLine = { key: 'income_cents' | 'expense_cents' | 'net_cents'; label: string; color: string };
+const REPORT_LINES: ReportLine[] = [
+  { key: 'income_cents', label: 'Entradas', color: '#16A34A' },
+  { key: 'expense_cents', label: 'Saídas', color: '#E83E8C' },
+  { key: 'net_cents', label: 'Resultado', color: '#7C3AED' },
+];
+
+function shortMoney(cents: number): string {
+  const reais = Math.abs(cents) / 100;
+  const sign = cents < 0 ? '−' : '';
+  if (reais >= 1_000_000) return `${sign}${(reais / 1_000_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mi`;
+  if (reais >= 10_000) return `${sign}${(reais / 1_000).toLocaleString('pt-BR', { maximumFractionDigits: 0 })} mil`;
+  if (reais >= 1_000) return `${sign}${(reais / 1_000).toLocaleString('pt-BR', { maximumFractionDigits: 1 })} mil`;
+  return `${sign}${Math.round(reais).toLocaleString('pt-BR')}`;
 }
+
+function reportDateLabel(date: string): string {
+  const match = date.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}/${match[2]}/${match[1]}` : date;
+}
+
+function percentChange(current: number, previous: number): string {
+  if (previous === 0) return current === 0 ? '0%' : 'Novo';
+  const value = ((current - previous) / Math.abs(previous)) * 100;
+  return `${value > 0 ? '+' : ''}${value.toLocaleString('pt-BR', { maximumFractionDigits: 1, minimumFractionDigits: 1 })}%`;
+}
+
+function ReportLineChart({ points, darkMode, showValues }: { points: ReportPoint[]; darkMode: boolean; showValues: boolean }) {
+  const allValues = points.flatMap((point) => REPORT_LINES.map((line) => Number(point[line.key] ?? 0)));
+  if (points.length < 2 || !allValues.some((value) => value !== 0)) {
+    return <EmptyState title="Ainda faltam dados para a tendência" text="Registre entradas e saídas em mais de uma data para visualizar a evolução financeira." />;
+  }
+  let minValue = Math.min(0, ...allValues);
+  let maxValue = Math.max(0, ...allValues);
+  if (maxValue === minValue) maxValue = minValue + 1;
+  const left = 39; const right = 333; const top = 14; const bottom = 137;
+  const graphWidth = right - left; const graphHeight = bottom - top;
+  const xAt = (index: number) => points.length === 1 ? left + graphWidth / 2 : left + index * graphWidth / (points.length - 1);
+  const yAt = (value: number) => bottom - ((value - minValue) / (maxValue - minValue)) * graphHeight;
+  const gridValues = [maxValue, minValue + (maxValue - minValue) / 2, minValue];
+  const darkGrid = darkMode ? '#42364F' : '#EAE4F2';
+  const muted = darkMode ? '#B7ABC5' : '#81768F';
+  return <View>
+    <Svg width="100%" height={174} viewBox="0 0 340 174" preserveAspectRatio="none">
+      {gridValues.map((value, index) => <React.Fragment key={`grid-${index}`}>
+        <Line x1={left} y1={yAt(value)} x2={right} y2={yAt(value)} stroke={darkGrid} strokeWidth={1} strokeDasharray={index === 1 ? '3 4' : undefined} />
+        <SvgText x={1} y={yAt(value) + 3} fill={muted} fontSize={9}>{showValues ? shortMoney(value) : '•••'}</SvgText>
+      </React.Fragment>)}
+      {REPORT_LINES.map((line) => {
+        const coords = points.map((point, index) => `${xAt(index)},${yAt(Number(point[line.key] ?? 0))}`);
+        const path = coords.map((coordinate, index) => `${index === 0 ? 'M' : 'L'} ${coordinate}`).join(' ');
+        return <React.Fragment key={line.key}>
+          <Path d={path} fill="none" stroke={line.color} strokeWidth={line.key === 'net_cents' ? 2.6 : 2.1} strokeLinecap="round" strokeLinejoin="round" />
+          {points.map((point, index) => <Circle key={`${line.key}-${point.key}`} cx={xAt(index)} cy={yAt(Number(point[line.key] ?? 0))} r={points.length > 20 ? 1.4 : 2.7} fill={line.color} />)}
+        </React.Fragment>;
+      })}
+    </Svg>
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', paddingLeft: 38, paddingRight: 4, marginTop: -1 }}>
+      {points.map((point) => <Text key={point.key} numberOfLines={1} style={{ flex: 1, textAlign: 'center', color: muted, fontSize: points.length > 20 ? 8 : 10 }}>{point.label || ' '}</Text>)}
+    </View>
+    <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 13, marginTop: 12 }}>
+      {REPORT_LINES.map((line) => <View key={line.key} style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}><View style={{ width: 8, height: 8, borderRadius: 4, backgroundColor: line.color }} /><Text style={styles.muted}>{line.label}</Text></View>)}
+    </View>
+    <Text style={[styles.muted, { marginTop: 7 }]}>A escala indica os valores absolutos. Os pontos são calculados a partir dos lançamentos realizados.</Text>
+  </View>;
+}
+
+function DonutReportChart({ slices, fmt, darkMode }: { slices: ReportSlice[]; fmt: (cents: number) => string; darkMode: boolean }) {
+  const top = slices.filter((slice) => slice.total_cents > 0).slice(0, 6);
+  const extra = slices.filter((slice) => slice.total_cents > 0).slice(6);
+  if (extra.length) top.push({ name: 'Outras categorias', icon: '•', total_cents: extra.reduce((sum, item) => sum + item.total_cents, 0), count: extra.reduce((sum, item) => sum + item.count, 0) });
+  const total = top.reduce((sum, slice) => sum + slice.total_cents, 0);
+  if (total <= 0) return <EmptyState title="Sem movimentações neste recorte" text="Quando você registrar movimentações realizadas, a distribuição aparecerá aqui." />;
+  const size = 168; const center = 84; const radius = 55; const stroke = 24; const circumference = 2 * Math.PI * radius;
+  let offset = 0;
+  const segmentData = top.map((slice, index) => {
+    const length = circumference * slice.total_cents / total;
+    const data = { slice, index, length, offset };
+    offset += length;
+    return data;
+  });
+  return <View style={{ flexDirection: 'row', alignItems: 'center', gap: 15 }}>
+    <View style={{ width: size, height: size, alignItems: 'center', justifyContent: 'center' }}>
+      <Svg width={size} height={size} viewBox={`0 0 ${size} ${size}`}>
+        <Circle cx={center} cy={center} r={radius} fill="none" stroke={darkMode ? '#3A3045' : '#F0ECF5'} strokeWidth={stroke} />
+        {segmentData.map(({ slice, index, length, offset: segmentOffset }) => {
+          const visibleLength = Math.max(0.5, length - 1.3);
+          return <Circle key={`${slice.name}-${index}`} cx={center} cy={center} r={radius} fill="none" stroke={REPORT_PALETTE[index % REPORT_PALETTE.length]} strokeWidth={stroke} strokeDasharray={[visibleLength, circumference - visibleLength]} strokeDashoffset={-segmentOffset} transform={`rotate(-90 ${center} ${center})`} />;
+        })}
+      </Svg>
+      <View pointerEvents="none" style={{ position: 'absolute', width: 90, alignItems: 'center' }}>
+        <Text style={{ color: darkMode ? '#B7ABC5' : MUTED, fontSize: 10 }}>Total</Text>
+        <Text numberOfLines={2} adjustsFontSizeToFit style={{ color: darkMode ? '#F4EFFA' : INK, fontSize: 13, fontWeight: '900', textAlign: 'center' }}>{fmt(total)}</Text>
+      </View>
+    </View>
+    <View style={{ flex: 1, gap: 10 }}>
+      {top.map((slice, index) => <View key={`${slice.name}-${index}`} style={{ flexDirection: 'row', alignItems: 'flex-start', gap: 7 }}>
+        <View style={{ width: 9, height: 9, borderRadius: 3, backgroundColor: REPORT_PALETTE[index % REPORT_PALETTE.length], marginTop: 3 }} />
+        <View style={{ flex: 1 }}>
+          <Text style={styles.categoryName} numberOfLines={2}>{slice.icon} {slice.name}</Text>
+          <Text style={styles.muted}>{(slice.total_cents / total * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% · {slice.count} lançamento(s)</Text>
+          <Text style={styles.categoryAmount}>{fmt(slice.total_cents)}</Text>
+        </View>
+      </View>)}
+    </View>
+  </View>;
+}
+
+function MonthlyComparisonChart({ points, darkMode }: { points: ReportPoint[]; darkMode: boolean }) {
+  if (!points.length || !points.some((point) => point.income_cents > 0 || point.expense_cents > 0)) {
+    return <EmptyState title="Sem dados para comparar" text="Registre entradas e saídas em diferentes meses para construir esta comparação." />;
+  }
+  const max = Math.max(1, ...points.flatMap((point) => [point.income_cents, point.expense_cents]));
+  const muted = darkMode ? '#B7ABC5' : MUTED;
+  return <View>
+    <View style={{ flexDirection: 'row', gap: 14, marginBottom: 11 }}>
+      {[{ title: 'Entradas', color: '#16A34A' }, { title: 'Saídas', color: '#E83E8C' }].map((item) => <View key={item.title} style={{ flexDirection: 'row', gap: 5, alignItems: 'center' }}><View style={{ width: 8, height: 8, borderRadius: 3, backgroundColor: item.color }} /><Text style={styles.muted}>{item.title}</Text></View>)}
+    </View>
+    <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 160, gap: 6 }}>
+      {points.map((point) => <View key={point.key} style={{ flex: 1, minWidth: 0, alignItems: 'center', justifyContent: 'flex-end', height: '100%' }}>
+        <View style={{ flexDirection: 'row', alignItems: 'flex-end', height: 126, width: '100%', justifyContent: 'center', gap: 2 }}>
+          <View style={{ width: '40%', minWidth: 3, height: Math.max(2, point.income_cents / max * 116), borderTopLeftRadius: 3, borderTopRightRadius: 3, backgroundColor: '#16A34A' }} />
+          <View style={{ width: '40%', minWidth: 3, height: Math.max(2, point.expense_cents / max * 116), borderTopLeftRadius: 3, borderTopRightRadius: 3, backgroundColor: '#E83E8C' }} />
+        </View>
+        <Text numberOfLines={1} style={{ color: muted, fontSize: 9, marginTop: 8, textTransform: 'capitalize' }}>{point.label}</Text>
+      </View>)}
+    </View>
+  </View>;
+}
+
+function ReportsScreen({ db, summary, fmt, onExportCsv, onBackup, darkMode, showValues }: any) {
+  const [period, setPeriod] = useState<ReportPeriod>('6m');
+  const [report, setReport] = useState<ReportAnalytics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+
+  useEffect(() => {
+    let active = true;
+    setLoading(true); setLoadError(''); setReport(null);
+    getReportAnalytics(db, period).then((data) => { if (active) setReport(data); })
+      .catch((error: any) => { if (active) setLoadError(error?.message ?? 'Não foi possível calcular os relatórios locais.'); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [db, period, summary]);
+
+  const periods: { value: ReportPeriod; label: string }[] = [
+    { value: 'month', label: 'Este mês' }, { value: '6m', label: '6 meses' }, { value: '12m', label: '12 meses' }, { value: 'year', label: 'Este ano' },
+  ];
+
+  const insightItems = useMemo(() => {
+    if (!report) return [] as { title: string; body: string; color: string }[];
+    const items: { title: string; body: string; color: string }[] = [];
+    const current = report.current; const previous = report.previous;
+    if (current.transaction_count === 0) {
+      items.push({ title: 'Comece registrando seus dados', body: 'Não há movimentações realizadas no período selecionado. Cadastre entradas e saídas para habilitar análises e comparações.', color: VIOLET });
+      return items;
+    }
+    if (current.expense_cents > current.income_cents) {
+      items.push({ title: 'As saídas superam as entradas', body: `Neste período, as saídas passaram as entradas em ${fmt(current.expense_cents - current.income_cents)}. Revise compromissos e despesas antes de assumir novos gastos.`, color: '#E83E8C' });
+    } else if (current.net_cents > 0) {
+      items.push({ title: 'Resultado positivo no recorte', body: `As entradas superaram as saídas em ${fmt(current.net_cents)}. Avalie quanto desse resultado pode ser destinado às suas metas, considerando os compromissos futuros.`, color: '#16A34A' });
+    }
+    if (previous.expense_cents > 0) {
+      const delta = ((current.expense_cents - previous.expense_cents) / previous.expense_cents) * 100;
+      if (Math.abs(delta) >= 5) items.push({ title: delta > 0 ? 'Atenção à evolução das despesas' : 'As despesas diminuíram', body: `As saídas ${delta > 0 ? 'aumentaram' : 'diminuíram'} ${Math.abs(delta).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% em relação ao período anterior. Compare as categorias para identificar os principais fatores.`, color: delta > 0 ? '#E83E8C' : '#16A34A' });
+    }
+    const topCategory = report.expenseCategories[0];
+    if (topCategory) items.push({ title: `Maior categoria: ${topCategory.name}`, body: `${topCategory.name} representa ${(topCategory.total_cents / Math.max(1, current.expense_cents) * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}% das saídas realizadas neste recorte (${fmt(topCategory.total_cents)}). Confira se os lançamentos estão classificados corretamente.`, color: VIOLET });
+    if (!items.length) items.push({ title: 'Continue acompanhando', body: 'Os registros deste período estão organizados. Compare os próximos períodos para identificar tendências com mais confiança.', color: VIOLET });
+    return items;
+  }, [report, fmt]);
+
+  const exportSelectedReport = () => {
+    if (!report) { Alert.alert('Relatório indisponível', 'Aguarde os dados terminarem de ser calculados.'); return; }
+    Alert.alert('Exportar relatório analítico?', 'O arquivo CSV conterá valores financeiros completos, categorias, tendências e comparações do período selecionado.', [
+      { text: 'Cancelar', style: 'cancel' },
+      { text: 'Exportar CSV', onPress: async () => {
+        try {
+          if (!FileSystem.documentDirectory) throw new Error('O armazenamento de documentos não está disponível neste aparelho.');
+          const esc = (value: unknown) => `"${String(value ?? '').replace(/"/g, '""')}"`;
+          const csvRows: unknown[][] = [];
+          csvRows.push(['Relatório analítico GestVolt', report.periodLabel]);
+          csvRows.push(['Período atual', reportDateLabel(report.start), reportDateLabel(report.end)]);
+          csvRows.push(['Período anterior', reportDateLabel(report.previousStart), reportDateLabel(report.previousEnd)]);
+          csvRows.push([]);
+          csvRows.push(['Indicador', 'Atual (R$)', 'Anterior (R$)', 'Variação']);
+          csvRows.push(['Entradas', (report.current.income_cents / 100).toFixed(2).replace('.', ','), (report.previous.income_cents / 100).toFixed(2).replace('.', ','), percentChange(report.current.income_cents, report.previous.income_cents)]);
+          csvRows.push(['Saídas', (report.current.expense_cents / 100).toFixed(2).replace('.', ','), (report.previous.expense_cents / 100).toFixed(2).replace('.', ','), percentChange(report.current.expense_cents, report.previous.expense_cents)]);
+          csvRows.push(['Resultado financeiro', (report.current.net_cents / 100).toFixed(2).replace('.', ','), (report.previous.net_cents / 100).toFixed(2).replace('.', ','), percentChange(report.current.net_cents, report.previous.net_cents)]);
+          csvRows.push([]); csvRows.push(['Série mensal']); csvRows.push(['Competência', 'Mês', 'Entradas (R$)', 'Saídas (R$)', 'Resultado (R$)']);
+          report.monthly.forEach((point) => csvRows.push([point.key, point.label, (point.income_cents / 100).toFixed(2).replace('.', ','), (point.expense_cents / 100).toFixed(2).replace('.', ','), (point.net_cents / 100).toFixed(2).replace('.', ',')]));
+          csvRows.push([]); csvRows.push(['Comparação mensal do gráfico']); csvRows.push(['Competência', 'Mês', 'Entradas (R$)', 'Saídas (R$)', 'Resultado (R$)']);
+          report.monthlyComparison.forEach((point) => csvRows.push([point.key, point.label, (point.income_cents / 100).toFixed(2).replace('.', ','), (point.expense_cents / 100).toFixed(2).replace('.', ','), (point.net_cents / 100).toFixed(2).replace('.', ',')]));
+          if (report.daily.length) {
+            csvRows.push([]); csvRows.push(['Série diária']); csvRows.push(['Data', 'Dia', 'Entradas (R$)', 'Saídas (R$)', 'Resultado (R$)']);
+            report.daily.forEach((point) => csvRows.push([reportDateLabel(point.key), point.label, (point.income_cents / 100).toFixed(2).replace('.', ','), (point.expense_cents / 100).toFixed(2).replace('.', ','), (point.net_cents / 100).toFixed(2).replace('.', ',')]));
+          }
+          csvRows.push([]); csvRows.push(['Despesas por categoria']); csvRows.push(['Ícone', 'Categoria', 'Total (R$)', 'Quantidade']);
+          report.expenseCategories.forEach((item) => csvRows.push([item.icon, item.name, (item.total_cents / 100).toFixed(2).replace('.', ','), item.count]));
+          csvRows.push([]); csvRows.push(['Entradas por categoria']); csvRows.push(['Ícone', 'Categoria', 'Total (R$)', 'Quantidade']);
+          report.incomeCategories.forEach((item) => csvRows.push([item.icon, item.name, (item.total_cents / 100).toFixed(2).replace('.', ','), item.count]));
+          csvRows.push([]); csvRows.push(['Comparação de despesas por categoria']); csvRows.push(['Categoria', 'Atual (R$)', 'Anterior (R$)', 'Variação']);
+          report.expenseCategoryComparison.forEach((item) => csvRows.push([item.name, (item.current_cents / 100).toFixed(2).replace('.', ','), (item.previous_cents / 100).toFixed(2).replace('.', ','), percentChange(item.current_cents, item.previous_cents)]));
+          csvRows.push([]); csvRows.push(['Maiores despesas']); csvRows.push(['Descrição', 'Categoria', 'Data', 'Valor (R$)']);
+          report.topExpenses.forEach((item) => csvRows.push([item.description, item.category_name, reportDateLabel(item.transaction_date), (item.amount_cents / 100).toFixed(2).replace('.', ',')]));
+          const uri = `${FileSystem.documentDirectory}gestvolt-relatorio-${report.period}-${localDate()}.csv`;
+          const content = '\uFEFF' + csvRows.map((row) => row.map(esc).join(';')).join('\n');
+          await FileSystem.writeAsStringAsync(uri, content, { encoding: FileSystem.EncodingType.UTF8 });
+          if (await Sharing.isAvailableAsync()) await Sharing.shareAsync(uri, { mimeType: 'text/csv', dialogTitle: 'Exportar relatório GestVolt' });
+          else Alert.alert('Relatório criado', `Arquivo salvo em: ${uri}`);
+        } catch (error: any) { Alert.alert('Falha ao exportar relatório', error?.message ?? 'Não foi possível criar o CSV.'); }
+      } },
+    ]);
+  };
+
+  return <View>
+    <Card style={styles.reportHero}>
+      <Text style={styles.reportHeroEyebrow}>GESTVOLT ANALYTICS</Text>
+      <Text style={styles.reportHeroTitle}>Seus dados. Decisões melhores.</Text>
+      <Text style={styles.bodyText}>Analise tendências, distribuições e mudanças ao longo do tempo. Os cálculos usam os lançamentos realizados armazenados neste dispositivo.</Text>
+      <View style={[styles.chipWrap, { marginTop: 14, marginBottom: 0 }]}>{periods.map((item) => <Chip key={item.value} title={item.label} active={period === item.value} onPress={() => setPeriod(item.value)} />)}</View>
+      {report ? <Text style={[styles.muted, { marginTop: 11 }]}>Período: {reportDateLabel(report.start)} a {reportDateLabel(report.end)}. A comparação usa {reportDateLabel(report.previousStart)} a {reportDateLabel(report.previousEnd)}.</Text> : null}
+    </Card>
+
+    {loading && !report ? <Card><ActivityIndicator color={VIOLET} /><Text style={[styles.muted, { textAlign: 'center', marginTop: 8 }]}>Calculando seus relatórios localmente...</Text></Card> : null}
+    {loadError ? <Card><Text style={styles.cardTitle}>Não foi possível montar os relatórios</Text><Text style={styles.bodyText}>{loadError}</Text><PrimaryButton title="Tentar novamente" onPress={() => setPeriod((current) => current === 'month' ? '6m' : 'month')} /></Card> : null}
+    {report && <>
+      <View style={styles.reportKpiGrid}>
+        <View style={styles.reportKpiCell}><Card style={styles.reportKpiCard}><Text style={styles.reportKpiLabel}>ENTRADAS</Text><Text style={[styles.reportKpiValue, { color: '#16A34A' }]}>{fmt(report.current.income_cents)}</Text><Text style={styles.muted}>{report.current.income_count} lançamento(s)</Text></Card></View>
+        <View style={styles.reportKpiCell}><Card style={styles.reportKpiCard}><Text style={styles.reportKpiLabel}>SAÍDAS</Text><Text style={[styles.reportKpiValue, { color: '#E83E8C' }]}>{fmt(report.current.expense_cents)}</Text><Text style={styles.muted}>{report.current.expense_count} lançamento(s)</Text></Card></View>
+        <View style={styles.reportKpiCell}><Card style={styles.reportKpiCard}><Text style={styles.reportKpiLabel}>RESULTADO</Text><Text style={[styles.reportKpiValue, { color: report.current.net_cents >= 0 ? '#16A34A' : '#E83E8C' }]}>{fmt(report.current.net_cents)}</Text><Text style={styles.muted}>Entradas menos saídas</Text></Card></View>
+        <View style={styles.reportKpiCell}><Card style={styles.reportKpiCard}><Text style={styles.reportKpiLabel}>GASTO MÉDIO</Text><Text style={styles.reportKpiValue}>{fmt(report.current.average_expense_cents)}</Text><Text style={styles.muted}>Por saída registrada</Text></Card></View>
+        <View style={styles.reportKpiCell}><Card style={styles.reportKpiCard}><Text style={styles.reportKpiLabel}>RESULTADO / ENTRADAS</Text><Text style={[styles.reportKpiValue, { color: report.current.net_cents >= 0 ? '#16A34A' : '#E83E8C' }]}>{report.current.income_cents > 0 ? `${(report.current.net_cents / report.current.income_cents * 100).toLocaleString('pt-BR', { maximumFractionDigits: 1 })}%` : '—'}</Text><Text style={styles.muted}>Não representa margem contábil</Text></Card></View>
+        <View style={styles.reportKpiCell}><Card style={styles.reportKpiCard}><Text style={styles.reportKpiLabel}>LANÇAMENTOS</Text><Text style={styles.reportKpiValue}>{report.current.transaction_count.toLocaleString('pt-BR')}</Text><Text style={styles.muted}>Entradas e saídas realizadas</Text></Card></View>
+      </View>
+
+      <Card>
+        <SectionHeading title="Comparação com o período anterior" />
+        <Text style={[styles.muted, { marginBottom: 12 }]}>A variação compara os valores realizados de cada intervalo exibido acima.</Text>
+        {[{ label: 'Entradas', key: 'income_cents' as const, goodUp: true }, { label: 'Saídas', key: 'expense_cents' as const, goodUp: false }, { label: 'Resultado', key: 'net_cents' as const, goodUp: true }].map((row) => {
+          const current = report.current[row.key]; const previous = report.previous[row.key];
+          const deltaLabel = percentChange(current, previous);
+          const isUp = current >= previous;
+          const color = current === previous ? (darkMode ? '#B7ABC5' : MUTED) : (isUp === row.goodUp ? '#16A34A' : '#E83E8C');
+          return <View key={row.key} style={styles.reportComparisonRow}>
+            <Text style={styles.categoryName}>{row.label}</Text>
+            <View style={styles.reportComparisonValues}>
+              <View style={{ flex: 1 }}><Text style={styles.muted}>Anterior</Text><Text style={styles.reportCompareAmount}>{fmt(previous)}</Text></View>
+              <View style={{ flex: 1 }}><Text style={styles.muted}>Atual</Text><Text style={styles.reportCompareAmount}>{fmt(current)}</Text></View>
+              <View style={[styles.reportDeltaPill, { backgroundColor: darkMode ? '#302340' : '#F0E8FF' }]}><Text style={[styles.reportDeltaText, { color }]}>{deltaLabel}</Text></View>
+            </View>
+          </View>;
+        })}
+      </Card>
+
+      <Card>
+        <SectionHeading title={period === 'month' ? 'Evolução diária' : 'Evolução ao longo do tempo'} />
+        <Text style={[styles.muted, { marginBottom: 7 }]}>{period === 'month' ? 'Entradas, saídas e resultado por dia do mês atual.' : 'Entradas, saídas e resultado por mês no recorte selecionado.'}</Text>
+        <ReportLineChart points={period === 'month' ? report.daily : report.monthly} darkMode={darkMode} showValues={showValues} />
+      </Card>
+
+      <Card>
+        <SectionHeading title="Entradas versus saídas por mês" />
+        <Text style={[styles.muted, { marginBottom: 10 }]}>{period === 'month' ? 'Contexto dos últimos seis meses para você enxergar a tendência, mesmo com o resumo filtrado para este mês.' : 'Compare o volume de entradas e despesas mês a mês dentro do recorte selecionado, sem misturar transferências entre contas.'}</Text>
+        <MonthlyComparisonChart points={report.monthlyComparison} darkMode={darkMode} />
+      </Card>
+
+      <Card>
+        <SectionHeading title="Onde estão suas despesas?" />
+        <Text style={[styles.muted, { marginBottom: 14 }]}>Distribuição das despesas realizadas, agrupadas pelas categorias cadastradas.</Text>
+        <DonutReportChart slices={report.expenseCategories} fmt={fmt} darkMode={darkMode} />
+      </Card>
+
+      <Card>
+        <SectionHeading title="De onde vêm suas entradas?" />
+        <Text style={[styles.muted, { marginBottom: 14 }]}>Distribuição por categoria de receita para o período selecionado.</Text>
+        <DonutReportChart slices={report.incomeCategories} fmt={fmt} darkMode={darkMode} />
+      </Card>
+
+      <Card>
+        <SectionHeading title="Categorias em comparação" />
+        <Text style={[styles.muted, { marginBottom: 12 }]}>Veja quais categorias mais pesaram agora e como elas se comparam ao intervalo anterior.</Text>
+        {report.expenseCategoryComparison.length === 0 ? <EmptyState title="Sem categorias para comparar" text="As categorias aparecem aqui depois dos primeiros lançamentos de saída realizados." /> : report.expenseCategoryComparison.map((item, index) => {
+          const max = Math.max(1, ...report.expenseCategoryComparison.flatMap((row) => [row.current_cents, row.previous_cents]));
+          return <View key={`${item.name}-${index}`} style={styles.reportCategoryCompare}>
+            <View style={styles.rowBetween}><Text style={styles.categoryName}>{item.icon} {item.name}</Text><Text style={styles.categoryAmount}>{fmt(item.current_cents)}</Text></View>
+            <View style={styles.reportBarPair}><View style={[styles.reportBarPrevious, { width: `${Math.max(item.previous_cents > 0 ? 1 : 0, item.previous_cents / max * 100)}%` }]} /></View>
+            <View style={styles.reportBarPair}><View style={[styles.reportBarCurrent, { width: `${Math.max(item.current_cents > 0 ? 1 : 0, item.current_cents / max * 100)}%` }]} /></View>
+            <View style={[styles.rowBetween, { marginTop: 3 }]}><Text style={styles.muted}>Anterior: {fmt(item.previous_cents)}</Text><Text style={[styles.muted, { color: item.current_cents === item.previous_cents ? MUTED : item.current_cents > item.previous_cents ? '#E83E8C' : '#16A34A', fontWeight: '800' }]}>{percentChange(item.current_cents, item.previous_cents)}</Text></View>
+          </View>;
+        })}
+        <View style={{ flexDirection: 'row', gap: 13, marginTop: 8 }}><View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}><View style={{ width: 9, height: 5, borderRadius: 3, backgroundColor: '#A78BFA' }} /><Text style={styles.muted}>Anterior</Text></View><View style={{ flexDirection: 'row', alignItems: 'center', gap: 5 }}><View style={{ width: 9, height: 5, borderRadius: 3, backgroundColor: VIOLET }} /><Text style={styles.muted}>Atual</Text></View></View>
+      </Card>
+
+      <Card>
+        <SectionHeading title="Maiores despesas do período" />
+        {report.topExpenses.length === 0 ? <EmptyState title="Nenhuma saída realizada" text="Não há despesas realizadas no período selecionado." /> : report.topExpenses.map((item, index) => <View key={item.id} style={styles.reportTopExpense}>
+          <View style={styles.reportRank}><Text style={styles.reportRankText}>{index + 1}</Text></View>
+          <View style={{ flex: 1 }}><Text style={styles.categoryName}>{item.description}</Text><Text style={styles.muted}>{item.category_icon} {item.category_name} · {reportDateLabel(item.transaction_date)}</Text></View>
+          <Text style={styles.categoryAmount}>{fmt(item.amount_cents)}</Text>
+        </View>)}
+      </Card>
+
+      <Card>
+        <SectionHeading title="Leituras dos seus dados" />
+        {insightItems.map((item, index) => <View key={`${item.title}-${index}`} style={styles.reportInsightRow}>
+          <View style={[styles.reportInsightMarker, { backgroundColor: item.color }]} />
+          <View style={{ flex: 1 }}><Text style={styles.reportInsightTitle}>{item.title}</Text><Text style={styles.bodyText}>{item.body}</Text></View>
+        </View>)}
+        <Text style={[styles.muted, { marginTop: 9 }]}>As análises são geradas localmente a partir dos registros disponíveis. Elas são informativas e não substituem contabilidade ou aconselhamento financeiro individualizado.</Text>
+      </Card>
+    </>}
+
+    <Card>
+      <SectionHeading title="Exportar e preservar seus dados" />
+      <Text style={styles.bodyText}>Exporte os lançamentos para analisar em uma planilha ou crie um backup completo para guardar seus dados em segurança.</Text>
+      <PrimaryButton title="Exportar relatório analítico CSV" onPress={exportSelectedReport} disabled={!report || loading} />
+      <PrimaryButton title="Exportar movimentações CSV" variant="secondary" onPress={onExportCsv} />
+      <PrimaryButton title="Criar backup completo (JSON)" variant="secondary" onPress={onBackup} />
+      <Text style={[styles.muted, { marginTop: 9 }]}>Os arquivos são gerados no próprio aparelho. Os valores dos cartões de crédito ficam separados das despesas do fluxo de caixa para evitar dupla contagem.</Text>
+    </Card>
+  </View>;
+}
+
 function CardsScreen({ cards, purchases, selectedCard, onChoose, onAddCard, onAddPurchase, fmt }: any) {
   const selected = cards.find((c: any) => c.id === selectedCard);
   return <View><Card><SectionHeading title="Cartões de crédito" right="＋ Adicionar" onRight={onAddCard} />{cards.length === 0 ? <EmptyState title="Cadastre seu cartão" text="Registre manualmente compras, limite e parcelas. Não há sincronização com a administradora." /> : cards.map((c: any) => <Pressable key={c.id} onPress={() => onChoose(c.id)} style={[styles.creditCardTile, selectedCard === c.id && styles.creditCardSelected]}><View style={styles.rowBetween}><Text style={[styles.creditCardName, selectedCard === c.id && { color: '#FFFFFF' }]}>{c.name}</Text><Text style={[styles.creditCardBadge, selectedCard === c.id && { color: '#E9DDFB' }]}>GestVolt</Text></View><Text style={[styles.creditCardAmount, selectedCard === c.id && { color: '#FFFFFF' }]}>{fmt(c.used_cents ?? 0)}</Text><Text style={[styles.creditCardFoot, selectedCard === c.id && { color: '#E9DDFB' }]}>em compras registradas · Limite {fmt(c.limit_cents)}</Text><Text style={[styles.creditCardFoot, selectedCard === c.id && { color: '#E9DDFB' }]}>Fecha dia {c.closing_day} · Vence dia {c.due_day}</Text></Pressable>)}</Card>
@@ -731,6 +1054,7 @@ const baseStyleDefinitions: Record<string, any> = {
   cashflowHero: { backgroundColor: '#2A164A' }, cashflowTotal: { color: '#FFFFFF', fontSize: 29, fontWeight: '900', marginTop: 8, marginBottom: 5 }, cashBars: { flexDirection: 'row', height: 165, alignItems: 'flex-end', justifyContent: 'space-between', gap: 8, marginTop: 10 }, cashBarCol: { flex: 1, alignItems: 'center', justifyContent: 'flex-end' }, cashBarNumber: { fontSize: 9, fontWeight: '700', height: 15 }, cashBarTrack: { height: 122, width: '70%', borderRadius: 7, backgroundColor: '#F3EFF8', overflow: 'hidden', justifyContent: 'flex-end' }, cashBar: { width: '100%', borderRadius: 7 }, cashBarLabel: { fontSize: 10, color: MUTED, marginTop: 5 }, moneyText: { fontSize: 13, fontWeight: '900', color: INK },
   assistantIntro: { backgroundColor: '#F0E8FF', borderColor: '#E1D3F8' }, assistantOrb: { height: 48, width: 48, borderRadius: 18, backgroundColor: PURPLE, alignItems: 'center', justifyContent: 'center', marginBottom: 10 }, assistantOrbText: { color: '#FFFFFF', fontSize: 27, fontWeight: '900' }, localPill: { alignSelf: 'flex-start', paddingHorizontal: 11, paddingVertical: 6, borderRadius: 99, backgroundColor: '#E1F5E9', marginTop: 11 }, localPillText: { color: GREEN, fontSize: 10, fontWeight: '800' }, quickQuestion: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', borderRadius: 12, borderWidth: 1, borderColor: LINE, padding: 12, marginTop: 7 }, quickQuestionText: { color: INK, fontSize: 12, fontWeight: '700', flex: 1 }, quickArrow: { color: VIOLET, fontWeight: '900', fontSize: 17 }, chatPair: { marginBottom: 13, gap: 8 }, userBubble: { alignSelf: 'flex-end', backgroundColor: PURPLE, padding: 11, borderRadius: 14, borderBottomRightRadius: 4, maxWidth: '90%' }, userBubbleText: { color: '#FFFFFF', fontSize: 12, lineHeight: 18 }, answerBubble: { alignSelf: 'stretch', backgroundColor: '#F8F5FC', borderWidth: 1, borderColor: '#EAE1F7', padding: 13, borderRadius: 14, borderTopLeftRadius: 4 }, answerLabel: { fontSize: 9, color: VIOLET, fontWeight: '900', letterSpacing: 0.8, marginBottom: 6 }, answerText: { color: '#554963', fontSize: 12, lineHeight: 19 },
   evoluiHero: { backgroundColor: '#F0E8FF', borderColor: '#E4D8FA', borderWidth: 1, borderRadius: 24, padding: 20, marginBottom: 0 }, evoluiTitle: { color: PURPLE, fontSize: 24, fontWeight: '900', letterSpacing: -0.6, marginTop: 10, marginBottom: 7 }, learningProgress: { flexDirection: 'row', alignItems: 'center', gap: 18, marginTop: 18 }, learningProgressBig: { color: PURPLE, fontSize: 24, fontWeight: '900' }, learningProgressSmall: { color: MUTED, fontSize: 10 }, lessonRow: { flexDirection: 'row', gap: 10, alignItems: 'flex-start', paddingVertical: 13, borderBottomWidth: 1, borderBottomColor: '#F0ECF5' }, lessonIcon: { width: 37, height: 37, borderRadius: 13, backgroundColor: PALE, alignItems: 'center', justifyContent: 'center' }, lessonIconText: { color: PURPLE, fontWeight: '900', fontSize: 16 }, lessonTitle: { fontSize: 12, color: INK, fontWeight: '900', marginBottom: 3 }, lessonSummary: { color: '#7C7188', fontSize: 11, lineHeight: 16, marginTop: 5 }, lessonModalContent: { padding: 20, paddingBottom: 40 }, lessonCategory: { fontSize: 10, color: VIOLET, fontWeight: '900', letterSpacing: 1, marginTop: 14 }, lessonModalTitle: { color: INK, fontSize: 29, lineHeight: 35, fontWeight: '900', marginTop: 10, marginBottom: 12 }, lessonParagraph: { color: '#5B5068', fontSize: 15, lineHeight: 24, marginTop: 19 }, actionBox: { backgroundColor: '#F0E8FF', padding: 16, borderRadius: 17, marginTop: 25, marginBottom: 10 }, actionEyebrow: { color: VIOLET, fontSize: 10, fontWeight: '900', letterSpacing: 0.8, marginBottom: 7 },
+  reportHero: { backgroundColor: '#F0E8FF', borderColor: '#E1D3F8', borderWidth: 1 }, reportHeroEyebrow: { color: '#7C3AED', fontWeight: '900', fontSize: 10, letterSpacing: 1.5, marginBottom: 7 }, reportHeroTitle: { color: '#241B32', fontSize: 23, lineHeight: 29, fontWeight: '900', letterSpacing: -0.6, marginBottom: 7 }, reportKpiGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 14 }, reportKpiCell: { width: '48%', flexGrow: 1, minWidth: 135 }, reportKpiCard: { marginBottom: 0, padding: 13, minHeight: 107 }, reportKpiLabel: { color: '#81768F', fontSize: 9, fontWeight: '900', letterSpacing: 0.8, marginBottom: 7 }, reportKpiValue: { color: '#241B32', fontSize: 16, fontWeight: '900', marginBottom: 5 }, reportComparisonRow: { paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#F0ECF5' }, reportComparisonValues: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, marginTop: 8 }, reportCompareAmount: { color: '#241B32', fontSize: 12, fontWeight: '800', marginTop: 3 }, reportDeltaPill: { paddingHorizontal: 8, paddingVertical: 5, borderRadius: 8, backgroundColor: '#F0E8FF', alignSelf: 'flex-start' }, reportDeltaText: { fontSize: 10, fontWeight: '900' }, reportCategoryCompare: { marginTop: 8, paddingBottom: 13, marginBottom: 3, borderBottomWidth: 1, borderBottomColor: '#F0ECF5' }, reportBarPair: { height: 6, backgroundColor: '#F0ECF5', borderRadius: 8, marginTop: 6, overflow: 'hidden' }, reportBarPrevious: { height: '100%', backgroundColor: '#A78BFA', borderRadius: 8 }, reportBarCurrent: { height: '100%', backgroundColor: '#7C3AED', borderRadius: 8 }, reportTopExpense: { flexDirection: 'row', alignItems: 'center', gap: 10, paddingVertical: 11, borderBottomWidth: 1, borderBottomColor: '#F0ECF5' }, reportRank: { width: 28, height: 28, borderRadius: 10, backgroundColor: '#F0E8FF', alignItems: 'center', justifyContent: 'center' }, reportRankText: { color: '#7C3AED', fontSize: 11, fontWeight: '900' }, reportInsightRow: { flexDirection: 'row', gap: 10, marginTop: 12, alignItems: 'flex-start' }, reportInsightMarker: { width: 4, borderRadius: 4, minHeight: 42 }, reportInsightTitle: { color: '#241B32', fontSize: 13, fontWeight: '900', marginBottom: 4 },
   accountsHero: { backgroundColor: '#2A164A' }, accountRow: { flexDirection: 'row', gap: 10, alignItems: 'center', borderBottomWidth: 1, borderBottomColor: '#F0ECF5', paddingVertical: 12 }, accountIcon: { height: 38, width: 38, borderRadius: 13, backgroundColor: PALE, alignItems: 'center', justifyContent: 'center' }, accountIconText: { color: PURPLE, fontSize: 17, fontWeight: '900' }, accountBalance: { color: INK, fontWeight: '900', fontSize: 12 }, goalHero: { backgroundColor: '#F0E8FF' }, reportMetric: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 9, borderBottomWidth: 1, borderBottomColor: '#F0ECF5' }, creditCardTile: { backgroundColor: '#321357', borderRadius: 18, padding: 16, marginTop: 9 }, creditCardSelected: { backgroundColor: '#6A2FB4', borderColor: '#C6A7F7', borderWidth: 2 }, creditCardName: { color: '#FFFFFF', fontSize: 14, fontWeight: '900' }, creditCardBadge: { color: '#CDB9EE', fontSize: 10, fontWeight: '900' }, creditCardAmount: { color: '#FFFFFF', fontSize: 24, fontWeight: '900', marginTop: 23 }, creditCardFoot: { color: '#D4C4E9', fontSize: 10, marginTop: 6 },
   settingsDivider: { height: 1, backgroundColor: LINE, marginVertical: 14 }, toggle: { width: 48, height: 27, borderRadius: 20, backgroundColor: '#D9D0E4', justifyContent: 'center', padding: 3 }, toggleOn: { backgroundColor: VIOLET }, toggleKnob: { height: 21, width: 21, borderRadius: 11, backgroundColor: '#FFFFFF' }, toggleKnobOn: { alignSelf: 'flex-end' },
   onboardingPage: { padding: 18, paddingBottom: 35, gap: 13 }, onboardingLogo: { alignSelf: 'center', marginTop: 15, backgroundColor: PURPLE, width: 74, height: 74, borderRadius: 24, alignItems: 'center', justifyContent: 'center' }, onboardingLogoImage: { alignSelf: 'center', marginTop: 15, backgroundColor: PURPLE, width: 74, height: 74, borderRadius: 24 }, onboardingEyebrow: { color: VIOLET, fontSize: 10, fontWeight: '900', letterSpacing: 2, textAlign: 'center', marginTop: 5 }, onboardingTitle: { color: INK, fontSize: 36, fontWeight: '900', textAlign: 'center', letterSpacing: -1.3 }, onboardingSubtitle: { color: MUTED, fontSize: 13, textAlign: 'center', marginBottom: 7 }, choice: { flexDirection: 'row', alignItems: 'center', gap: 10, borderWidth: 1, borderColor: LINE, borderRadius: 13, padding: 12, marginTop: 7, backgroundColor: '#FFFFFF' }, choiceSelected: { borderColor: VIOLET, backgroundColor: '#F8F3FF' }, radio: { borderWidth: 1.5, borderColor: '#B5A9C3', borderRadius: 20, width: 18, height: 18 }, radioSelected: { borderWidth: 5, borderColor: VIOLET }, choiceTitle: { color: INK, fontWeight: '800', fontSize: 12 }, choiceText: { color: MUTED, fontSize: 10, marginTop: 3 }, privacyNote: { color: MUTED, fontSize: 10, textAlign: 'center', lineHeight: 16, marginTop: 6 },

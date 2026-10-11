@@ -196,6 +196,8 @@ export async function prepareDatabase(db: SQLiteDatabase): Promise<void> {
     CREATE INDEX IF NOT EXISTS idx_transactions_date ON transactions(transaction_date);
     CREATE INDEX IF NOT EXISTS idx_transactions_status ON transactions(status);
     CREATE INDEX IF NOT EXISTS idx_transactions_account ON transactions(account_id);
+    CREATE INDEX IF NOT EXISTS idx_transactions_status_type_date ON transactions(status,type,transaction_date);
+    CREATE INDEX IF NOT EXISTS idx_transactions_category_status_date ON transactions(category_id,status,transaction_date);
     CREATE TABLE IF NOT EXISTS goals (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
@@ -241,6 +243,8 @@ export async function prepareDatabase(db: SQLiteDatabase): Promise<void> {
       FOREIGN KEY(card_id) REFERENCES cards(id) ON DELETE CASCADE,
       FOREIGN KEY(category_id) REFERENCES categories(id) ON DELETE SET NULL
     );
+    CREATE INDEX IF NOT EXISTS idx_card_purchases_card_date ON card_purchases(card_id,purchase_date);
+    CREATE INDEX IF NOT EXISTS idx_card_purchases_date ON card_purchases(purchase_date);
   `);
 
   const transactionColumns = await db.getAllAsync<{ name: string }>('PRAGMA table_info(transactions)');

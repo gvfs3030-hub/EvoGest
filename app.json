@@ -2,7 +2,7 @@
   "expo": {
     "name": "GestVolt",
     "slug": "gestvolt-finance",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "orientation": "portrait",
     "userInterfaceStyle": "automatic",
     "scheme": "gestvolt",
@@ -15,7 +15,7 @@
     },
     "android": {
       "package": "com.evogest.app",
-      "versionCode": 3,
+      "versionCode": 4,
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#0D0011"

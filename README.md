@@ -49,6 +49,19 @@ Faça um backup antes de instalar a nova build. A assinatura Android precisa ser
 - Os conteúdos educacionais são embarcados e não são atualizados em tempo real.
 - Mantenha backups em local seguro; perder o aparelho ou a chave do banco pode impedir a recuperação sem cópia válida.
 
+## Atualizações da versão 1.3.0
+
+- Nova área analítica com filtros para este mês, últimos 6 meses, últimos 12 meses e ano atual.
+- Gráfico de linhas para entradas, saídas e resultado; no filtro mensal, os pontos são diários.
+- Gráfico de barras agrupadas para comparar entradas e saídas mês a mês.
+- Gráficos de rosca para despesas e receitas por categoria.
+- Comparação de período atual e anterior para entradas, saídas e resultado, incluindo comparação visual por categoria.
+- Ranking das maiores despesas e leituras automáticas dos dados, calculadas localmente.
+- Relatórios consultam os registros diretamente no SQLite, independentemente do limite da lista de movimentações; foram adicionados índices para acelerar as consultas.
+- Exportação do relatório analítico em CSV, com séries mensais/diárias, categorias, comparações e maiores despesas.
+- Tamanho visual do símbolo G reduzido no ícone do app, no ícone adaptativo, na wordmark e na tela de abertura.
+- Incremento para versão Android `1.3.0` / `versionCode 4`; biblioteca `react-native-svg` alinhada à versão recomendada pelo Expo SDK 55.
+
 ## Atualizações da versão 1.2.0
 
 - Marca renomeada para **GestVolt**, com novo ícone roxo/magenta e slogan **“Gestão inteligente. Resultados reais.”**
