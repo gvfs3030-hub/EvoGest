@@ -183,12 +183,18 @@ async function safeClose(db: SQLiteDatabase | null): Promise<void> {
  */
 export async function openAndPrepareDatabase(): Promise<SQLiteDatabase> {
   const existingFile = await dbFileExistsBeforeOpen();
-  let key = await SecureStore.getItemAsync(DB_KEY_NAME);
+  let key = await SecureStore.getItemAsync(DB_KEY_NAME, { keychainService: DB_KEY_NAME });
 
   // Only create a key when no database file exists. Never replace a missing key for an existing file.
   if (!existingFile && !key) {
     key = `${Crypto.randomUUID().replace(/-/g, '')}${Crypto.randomUUID().replace(/-/g, '')}`;
     await SecureStore.setItemAsync(DB_KEY_NAME, key, { keychainService: DB_KEY_NAME });
+    // Critical: SecureStore entries saved with keychainService must be read with the same option.
+    // Verify persistence before encrypting a new database, otherwise the next launch could be locked out.
+    const persistedKey = await SecureStore.getItemAsync(DB_KEY_NAME, { keychainService: DB_KEY_NAME });
+    if (persistedKey !== key) {
+      throw new Error('EVOGEST_DB_KEY_PERSIST_FAILED: A chave do banco não pôde ser confirmada no armazenamento seguro. Nenhum banco criptografado foi criado.');
+    }
   }
 
   if (key) {
@@ -207,7 +213,7 @@ export async function openAndPrepareDatabase(): Promise<SQLiteDatabase> {
           throw new Error(dbErrorMessage('EVOGEST_DB_UNLOCK_FAILED'));
         }
         // Only remove the stale SecureStore key after proving the file is readable without encryption.
-        try { await SecureStore.deleteItemAsync(DB_KEY_NAME); } catch { /* plaintext fallback remains available next launch */ }
+        try { await SecureStore.deleteItemAsync(DB_KEY_NAME, { keychainService: DB_KEY_NAME }); } catch { /* plaintext fallback remains available next launch */ }
         try {
           await prepareDatabaseSchema(plainDb);
           return plainDb;
