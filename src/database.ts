@@ -1,4 +1,6 @@
+import * as SQLite from 'expo-sqlite';
 import type { SQLiteDatabase } from 'expo-sqlite';
+import * as FileSystem from 'expo-file-system/legacy';
 import * as SecureStore from 'expo-secure-store';
 import * as Crypto from 'expo-crypto';
 
@@ -132,17 +134,118 @@ export function inputFromCents(cents: number): string {
   return (cents / 100).toFixed(2).replace('.', ',');
 }
 
-export async function prepareDatabase(db: SQLiteDatabase): Promise<void> {
-  let key = await SecureStore.getItemAsync(DB_KEY_NAME);
-  if (!key) {
-    key = `${Crypto.randomUUID().replace(/-/g, '')}${Crypto.randomUUID().replace(/-/g, '')}`;
-    await SecureStore.setItemAsync(DB_KEY_NAME, key, {
-      keychainService: DB_KEY_NAME,
-    });
+const DATABASE_NAME = 'evogest.db';
+
+function dbErrorMessage(code: 'EVOGEST_DB_KEY_MISSING' | 'EVOGEST_DB_UNLOCK_FAILED' | 'EVOGEST_DB_PATH_CHECK_FAILED') {
+  if (code === 'EVOGEST_DB_KEY_MISSING') {
+    return 'EVOGEST_DB_KEY_MISSING: Encontramos um banco de dados existente, mas a chave de proteção não está disponível. O arquivo foi preservado e nenhuma chave nova foi criada. Não desinstale o GestVolt nem limpe os dados do aplicativo. Para recuperar as informações, será necessária a chave original ou um backup válido.';
   }
-  // expo-sqlite is configured with SQLCipher in app.json. The key must be applied before querying tables.
+  if (code === 'EVOGEST_DB_UNLOCK_FAILED') {
+    return 'EVOGEST_DB_UNLOCK_FAILED: Não foi possível validar o banco financeiro com a chave salva nem como um banco SQLite sem criptografia. O arquivo original não foi apagado nem recriado. Não desinstale o GestVolt nem limpe os dados. A recuperação pode exigir a chave original, um backup válido ou análise técnica do arquivo.';
+  }
+  return 'EVOGEST_DB_PATH_CHECK_FAILED: Não foi possível verificar com segurança se já existe um banco financeiro local. Para evitar sobrescrever dados, a inicialização foi interrompida. Não desinstale o GestVolt nem limpe os dados do aplicativo.';
+}
+
+async function dbFileExistsBeforeOpen(): Promise<boolean> {
+  try {
+    const directory = SQLite.defaultDatabaseDirectory as string | undefined;
+    if (!directory) throw new Error('Diretório SQLite indisponível');
+    const trimmedDirectory = directory.replace(/\/+$/, '');
+    const baseUri = trimmedDirectory.startsWith('file://')
+      ? trimmedDirectory
+      : `file://${trimmedDirectory.startsWith('/') ? '' : '/'}${trimmedDirectory}`;
+    const uri = `${baseUri}/${DATABASE_NAME}`;
+    const info = await FileSystem.getInfoAsync(uri);
+    return Boolean(info.exists && ((info as any).size == null || Number((info as any).size) > 0));
+  } catch {
+    throw new Error(dbErrorMessage('EVOGEST_DB_PATH_CHECK_FAILED'));
+  }
+}
+
+async function applyKeyAndValidate(db: SQLiteDatabase, key: string): Promise<void> {
   await db.execAsync(`PRAGMA key = '${key.replace(/'/g, "''")}';`);
+  // A wrong SQLCipher key or a non-SQLite file normally fails here. Do this before any schema/migration writes.
   await db.getFirstAsync('PRAGMA user_version');
+}
+
+async function validateWithoutKey(db: SQLiteDatabase): Promise<void> {
+  await db.getFirstAsync('PRAGMA user_version');
+}
+
+async function safeClose(db: SQLiteDatabase | null): Promise<void> {
+  if (!db) return;
+  try { await db.closeAsync(); } catch { /* preserve the original initialization error */ }
+}
+
+/**
+ * Opens and validates the local database without ever replacing a missing key when a database already exists.
+ * A plaintext database is only accepted after a no-key SQLite probe succeeds. Encrypted/unreadable data is preserved.
+ */
+export async function openAndPrepareDatabase(): Promise<SQLiteDatabase> {
+  const existingFile = await dbFileExistsBeforeOpen();
+  let key = await SecureStore.getItemAsync(DB_KEY_NAME);
+
+  // Only create a key when no database file exists. Never replace a missing key for an existing file.
+  if (!existingFile && !key) {
+    key = `${Crypto.randomUUID().replace(/-/g, '')}${Crypto.randomUUID().replace(/-/g, '')}`;
+    await SecureStore.setItemAsync(DB_KEY_NAME, key, { keychainService: DB_KEY_NAME });
+  }
+
+  if (key) {
+    const encryptedDb = await SQLite.openDatabaseAsync(DATABASE_NAME);
+    try {
+      await applyKeyAndValidate(encryptedDb, key);
+    } catch (keyedError) {
+      await safeClose(encryptedDb);
+      // An existing file may be a valid legacy/plain SQLite DB. Test without a key before deciding.
+      if (existingFile) {
+        const plainDb = await SQLite.openDatabaseAsync(DATABASE_NAME);
+        try {
+          await validateWithoutKey(plainDb);
+        } catch {
+          await safeClose(plainDb);
+          throw new Error(dbErrorMessage('EVOGEST_DB_UNLOCK_FAILED'));
+        }
+        // Only remove the stale SecureStore key after proving the file is readable without encryption.
+        try { await SecureStore.deleteItemAsync(DB_KEY_NAME); } catch { /* plaintext fallback remains available next launch */ }
+        try {
+          await prepareDatabaseSchema(plainDb);
+          return plainDb;
+        } catch (schemaError) {
+          await safeClose(plainDb);
+          throw new Error(`EVOGEST_DB_SCHEMA_FAILED: ${String((schemaError as Error)?.message ?? schemaError)}`);
+        }
+      }
+      throw new Error(`EVOGEST_DB_UNLOCK_FAILED: ${String((keyedError as Error)?.message ?? keyedError)}`);
+    }
+
+    try {
+      await prepareDatabaseSchema(encryptedDb);
+      return encryptedDb;
+    } catch (schemaError) {
+      await safeClose(encryptedDb);
+      throw new Error(`EVOGEST_DB_SCHEMA_FAILED: ${String((schemaError as Error)?.message ?? schemaError)}`);
+    }
+  }
+
+  // Existing database, missing key: allow only a proven plaintext SQLite file; never mint a new key here.
+  const plainDb = await SQLite.openDatabaseAsync(DATABASE_NAME);
+  try {
+    await validateWithoutKey(plainDb);
+  } catch {
+    await safeClose(plainDb);
+    throw new Error(dbErrorMessage('EVOGEST_DB_KEY_MISSING'));
+  }
+  try {
+    await prepareDatabaseSchema(plainDb);
+    return plainDb;
+  } catch (schemaError) {
+    await safeClose(plainDb);
+    throw new Error(`EVOGEST_DB_SCHEMA_FAILED: ${String((schemaError as Error)?.message ?? schemaError)}`);
+  }
+}
+
+async function prepareDatabaseSchema(db: SQLiteDatabase): Promise<void> {
   await db.execAsync('PRAGMA foreign_keys = ON;');
   await db.execAsync('PRAGMA journal_mode = WAL;');
 
@@ -255,7 +358,6 @@ export async function prepareDatabase(db: SQLiteDatabase): Promise<void> {
     await db.execAsync('ALTER TABLE transactions ADD COLUMN recurrence_group TEXT');
   }
 
-  const now = new Date().toISOString();
   for (const [name, icon] of INCOME_CATEGORIES) {
     await db.runAsync('INSERT OR IGNORE INTO categories(name,kind,icon,is_system) VALUES(?,?,?,1)', name, 'income', icon);
   }
@@ -266,7 +368,7 @@ export async function prepareDatabase(db: SQLiteDatabase): Promise<void> {
   await db.runAsync('INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)', 'dark_mode', 'false');
   await db.runAsync('INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)', 'privacy_hide_values', 'false');
   await db.execAsync('PRAGMA user_version = 1;');
-  void now;
+
 }
 
 export async function getProfile(db: SQLiteDatabase): Promise<Profile | null> {

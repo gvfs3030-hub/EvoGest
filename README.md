@@ -71,3 +71,10 @@ Faça um backup antes de instalar a nova build. A assinatura Android precisa ser
 - Campos monetários começam vazios; `0,00` aparece apenas como placeholder em tom discreto.
 - Backup novo identificado como GestVolt; importação permanece compatível com backups antigos EvoGest.
 - Incremento de versão Android para `1.2.0` / `versionCode 3`.
+
+
+## Versão 1.3.1 — inicialização segura do banco
+
+Esta versão não gera uma nova chave de criptografia quando já existe um arquivo SQLite local e a chave não está disponível. A inicialização valida a chave antes de executar migrações. Se o arquivo estiver inacessível, o aplicativo preserva o banco original e apresenta uma mensagem de recuperação. Não desinstale o aplicativo nem limpe seus dados durante a recuperação.
+
+A versão 1.3.1 pode ajudar a recuperar bancos SQLite não criptografados que ficaram associados a uma chave inválida, mas não consegue reconstruir uma chave SQLCipher perdida nem reparar automaticamente todos os tipos de corrupção. Faça backup regularmente quando o app voltar a abrir.

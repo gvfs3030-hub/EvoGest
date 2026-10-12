@@ -16,7 +16,7 @@ import {
   deleteTransaction, exportBackup, getAccounts, getAssistantHistory, getCardPurchases,
   getCards, getCategories, getExpenseBreakdown, getGoals, getLessonProgress,
   getMonthlySeries, getProfile, getSummary, getTransactions, getUpcoming, inputFromCents,
-  localDate, monthBounds, money, prepareDatabase, restoreBackup, saveAssistantMessage, saveLessonProgress,
+  localDate, monthBounds, money, openAndPrepareDatabase, restoreBackup, saveAssistantMessage, saveLessonProgress,
   saveProfile, setSetting, updateGoalSaved, updateTransaction, getSettings, getTransaction,
 } from './src/database';
 import { DAILY_TIPS, LESSONS, Lesson } from './src/content';
@@ -174,8 +174,7 @@ function AppContent() {
     let active = true;
     (async () => {
       try {
-        const database = await SQLite.openDatabaseAsync('evogest.db');
-        await prepareDatabase(database);
+        const database = await openAndPrepareDatabase();
         if (!active) return;
         setDb(database);
         await refresh(database);
@@ -413,7 +412,7 @@ function AppContent() {
   applyGlobalTheme(darkMode);
 
   if (initializing) return <SafeAreaView style={styles.center}><StatusBar barStyle={darkMode ? 'light-content' : 'dark-content'} backgroundColor={darkMode ? '#15111C' : BG} /><ActivityIndicator size="large" color={VIOLET} /><Text style={styles.loadingText}>Preparando seu espaço financeiro...</Text></SafeAreaView>;
-  if (fatalError) return <SafeAreaView style={styles.center}><StatusBar barStyle="dark-content" backgroundColor={BG} /><Image source={require('./assets/icon.png')} style={{ width: 76, height: 76, borderRadius: 20, marginBottom: 16 }} resizeMode="cover" /><Text style={styles.screenTitle}>Não foi possível abrir o GestVolt</Text><Text style={styles.bodyText}>{fatalError}</Text><Text style={styles.bodyText}>Se esta instalação foi feita a partir de uma versão anterior, não desinstale o aplicativo antes de verificar se há um backup válido.</Text></SafeAreaView>;
+  if (fatalError) return <SafeAreaView style={styles.center}><StatusBar barStyle="dark-content" backgroundColor={BG} /><Image source={require('./assets/icon.png')} style={{ width: 76, height: 76, borderRadius: 20, marginBottom: 16 }} resizeMode="cover" /><Text style={styles.screenTitle}>Não foi possível abrir o GestVolt</Text><Text style={styles.bodyText}>{fatalError}</Text><Text style={styles.bodyText}>Por segurança, o GestVolt não apagou nem recriou o banco de dados. Não desinstale o aplicativo, não limpe o armazenamento e não instale uma versão que recrie os dados antes de verificar a recuperação. Se você possui um backup JSON exportado anteriormente, ele poderá ser restaurado após o banco voltar a abrir.</Text></SafeAreaView>;
   if (!db) return null;
   if (!profile) return <Onboarding
     profileName={profileName} setProfileName={setProfileName} audience={onboardingAudience} setAudience={setOnboardingAudience}
